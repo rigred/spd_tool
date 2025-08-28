@@ -90,6 +90,11 @@ class DDR3Decoder:
         decoded.update(self._calculate_jedec_downbins(decoded['timings_ns'], decoded['max_data_rate_MTps']))
         decoded["manufacturing"] = self._decode_manufacturing()
         decoded["hpt_info"] = self._decode_hpt()
+
+        mech = self._decode_mechanical_info()
+        if mech:
+            decoded["mechanical_info"] = mech
+
         
         unbuffered_info = self._decode_unbuffered_info()
         if unbuffered_info:
@@ -202,14 +207,19 @@ class DDR3Decoder:
             p("31, bit 0", "Extended Temp Range", "Supported" if feat['ext_temp_range_support'] else "Not Supported", self.data[31])
             p("32, bit 7", "Module Thermal Sensor", "Present" if feat['thermal_sensor_present'] else "Absent", self.data[32])
 
+        if "mechanical_info" in data:
+            print("\n--- Module Mechanical Details ---")
+            m = data["mechanical_info"]
+            p("60, bits 4:0", "Nominal Height", m['nominal_height'], self.data[60])
+            p("61, bits 3:0", "Max Thickness (Front)", m['max_thickness_front'], self.data[61])
+            p("61, bits 7:4", "Max Thickness (Back)", m['max_thickness_back'], self.data[61])
+            p(62, "Reference Raw Card", f"{m['ref_raw_card']} Rev {m['ref_raw_card_rev']}", self.data[62])
+
+
         if "unbuffered_info" in data:
             print("\n--- Unbuffered Module Details ---")
             ub = data["unbuffered_info"]
-            p("60, bits 4:0", "Nominal Height", ub['nominal_height'], self.data[60])
-            p("61, bits 3:0", "Max Thickness (Front)", ub['max_thickness_front'], self.data[61])
-            p("61, bits 7:4", "Max Thickness (Back)", ub['max_thickness_back'], self.data[61])
-            p(62, "Reference Raw Card", f"{ub['ref_raw_card']} Rev {ub['ref_raw_card_rev']}", self.data[62])
-            p("63, bit 0", "Rank 1 Mapping", "Mirrored" if ub['rank_1_mapping_mirrored'] else "Standard", self.data[63])
+            p("63, bit 0", "Rank 1 Mapping", "Mirrored" if m['rank_1_mapping_mirrored'] else "Standard", self.data[63])
 
         if "registered_info" in data:
             print("\n--- Registered/Buffered Info ---")
@@ -330,40 +340,47 @@ class DDR3Decoder:
         }
     def _decode_organization_and_addressing(self) -> Dict:
         b4, b5, b7, b8 = self.data[4], self.data[5], self.data[7], self.data[8]
-        
-        bits_per_chip = 1 << (28 + (b4 & 0x0F))
+
+        # SDRAM device density (per-chip) from Byte 4 low nibble (0=x256Mb, ...)
+        bits_per_chip = 1 << (28 + (b4 & 0x0F))  # 256Mb << n
         chip_size_Mb = bits_per_chip / (1024**2)
         chip_size_str = f"{int(chip_size_Mb)}Mb" if chip_size_Mb < 1024 else f"{int(chip_size_Mb / 1024)}Gb"
 
-        ranks = ((b7 >> 3) & 0x7) + 1
-        sdram_device_width = 4 * (2**(b7 & 0x7))
-        data_width_bits = 1 << ((b8 & 0x7) + 3)
-        ecc_bits = 8 if ((b8 >> 3) & 0x3) == 0b01 else 0
-        
-        data_chips_per_rank = data_width_bits // sdram_device_width if sdram_device_width else 0
-        ecc_chips_per_rank = ecc_bits // sdram_device_width if sdram_device_width else 0
-        total_data_chips = ranks * data_chips_per_rank
-        total_ecc_chips = ranks * ecc_chips_per_rank
-        total_chips = total_data_chips + total_ecc_chips
+        # Module organization (Bytes 7-8) — same for UDIMM/RDIMM/LRDIMM
+        ranks = ((b7 >> 3) & 0x7) + 1                 # 0=1 rank, ...
+        sdram_device_width = 4 * (2 ** (b7 & 0x7))    # 0->x4,1->x8,2->x16,3->x32
 
+        # Primary bus width (bits 2:0) and ECC width (bits 5:3)
+        data_width_bits = 1 << ((b8 & 0x7) + 3)       # 0->8,1->16,2->32,3->64
+        ecc_code = (b8 >> 3) & 0x3                    # 0=none,1=8-bit,2=16-bit
+        ecc_bits = 8 if ecc_code == 0b01 else (16 if ecc_code == 0b10 else 0)
+
+        # Chip counts per rank
+        data_chips_per_rank = data_width_bits // sdram_device_width if sdram_device_width else 0
+        ecc_chips_per_rank  = ecc_bits       // sdram_device_width if sdram_device_width else 0
+        total_data_chips = ranks * data_chips_per_rank
+        total_ecc_chips  = ranks * ecc_chips_per_rank
+        total_chips      = total_data_chips + total_ecc_chips
+
+        # Capacity math
+        banks_per_chip = 8  # DDR3 SDRAM has 8 internal banks
         data_bytes = (bits_per_chip * total_data_chips) // 8
-        ecc_bytes = (bits_per_chip * total_ecc_chips) // 8
+        ecc_bytes  = (bits_per_chip * total_ecc_chips)  // 8
         data_gib = round(data_bytes / (1024**3), 2)
-        ecc_gib = round(ecc_bytes / (1024**3), 2)
+        ecc_gib  = round(ecc_bytes  / (1024**3), 2)
 
         module_size_str = f"{data_gib} GiB"
         if ecc_gib > 0:
             module_size_str += f" + {ecc_gib} GiB ECC"
-        
+
         total_chips_str = str(total_data_chips)
         if total_ecc_chips > 0:
             total_chips_str += f" + {total_ecc_chips} ECC"
 
-        bank_address_bits = 8 # Fixed for DDR3
+        # Address-derived size (row/col from Byte 5). Uses number of banks, not bit-count
         row_address_bits = 12 + ((b5 >> 3) & 0x7)
-        col_address_bits = 9 + (b5 & 0x7)
-        
-        addr_chip_bits = (2**row_address_bits) * (2**col_address_bits) * bank_address_bits * sdram_device_width
+        col_address_bits = 9  + (b5 & 0x7)
+        addr_chip_bits   = (2 ** row_address_bits) * (2 ** col_address_bits) * banks_per_chip * sdram_device_width
         addr_module_bytes = (addr_chip_bits * total_chips) // 8
 
         return {
@@ -376,11 +393,12 @@ class DDR3Decoder:
             "total_chips_str": total_chips_str,
             "data_width_bits": data_width_bits,
             "ecc_bits": ecc_bits,
-            "bank_address_bits": bank_address_bits,
+            "bank_address_bits": banks_per_chip,  # kept for display; value is number of banks
             "row_address_bits": row_address_bits,
             "col_address_bits": col_address_bits,
             "addressing_module_size_GiB": round(addr_module_bytes / (1024**3), 2)
         }
+
     def _decode_sdram_features(self) -> Dict:
         b30 = self.data[30]
         b31 = self.data[31]
@@ -421,6 +439,49 @@ class DDR3Decoder:
         jedec_standard_name = f"PC3{voltage_suffix}-{bandwidth}"
         
         return {"jedec_downbins": downbins, "jedec_standard_name": jedec_standard_name}
+
+
+    
+    def _decode_mechanical_info(self) -> Optional[Dict]:
+        """Decode physical/mechanical fields present on both UDIMM and RDIMM:
+        Byte60: Nominal height (5b) + Raw Card Extension (3b)
+        Byte61: Max thickness back/front (4b/4b)
+        Byte62: Reference raw card + Rev (and bank select for letter table)
+        Byte63 bit0: rank-1 address mapping mirror (UDIMM; still meaningful on RDIMM)
+        """
+        module_type = self.data[3]
+        # Apply to UDIMM/SO-DIMM/Micro-DIMM and also LR/RDIMM family (0x01, 0x05, 0x09)
+        if module_type not in [0x01, 0x02, 0x03, 0x04, 0x05, 0x08, 0x09, 0x0B, 0x0C, 0x0D, 0x11]:
+            return None
+
+        b60, b61, b62 = self.data[60], self.data[61], self.data[62]
+
+        height_code = b60 & 0x1F
+        height_str = (f"{14 + height_code} < height <= {15 + height_code} mm" if height_code > 0
+                    else "height <= 15 mm")
+
+        back_thick  = (b61 >> 4) & 0xF
+        front_thick = b61 & 0xF
+
+        raw_card_ext = (b60 >> 5) & 0x7
+        raw_card_rev = (b62 >> 5) & 0x3
+        if raw_card_ext > 0:
+            raw_card_rev += 4
+
+        card_map_a = { 0:'A', 1:'B', 2:'C', 3:'D', 4:'E', 5:'F', 6:'G', 7:'H', 8:'J', 9:'K', 10:'L', 11:'M', 12:'N', 13:'P', 14:'R', 15:'T', 16:'U', 17:'V', 18:'W', 19:'Y', 20:'AA', 21:'AB', 22:'AC', 23:'AD', 24:'AE', 25:'AF', 26:'AG', 27:'AH', 28:'AJ', 29:'AK', 30:'AL', 31:'ZZ' }
+        card_map_b = { 0:'AM', 1:'AN', 2:'AP', 3:'AR', 4:'AT', 5:'AU', 6:'AV', 7:'AW', 8:'AY', 9:'BA', 10:'BB', 11:'BC', 12:'BD', 13:'BE', 14:'BF', 15:'BG', 16:'BH', 17:'BJ', 18:'BK', 19:'BL', 20:'BM', 21:'BN', 22:'BP', 23:'BR', 24:'BT', 25:'BU', 26:'BV', 27:'BW', 28:'BY', 29:'CA', 30:'CB', 31:'ZZ' }
+
+        card_letter = card_map_b.get(b62 & 0x1F) if (b62 & 0x80) else card_map_a.get(b62 & 0x1F)
+
+        return {
+            "nominal_height": height_str,
+            "max_thickness_front": (f"{front_thick} < thickness <= {front_thick+1} mm" if front_thick > 0 else "thickness <= 1 mm"),
+            "max_thickness_back":  (f"{back_thick} < thickness <= {back_thick+1} mm"   if back_thick  > 0 else "thickness <= 1 mm"),
+            "ref_raw_card": card_letter,
+            "ref_raw_card_rev": raw_card_rev,
+            "rank_1_mapping_mirrored": (self.data[63] & 0x01) != 0
+        }
+        
     def _decode_manufacturing(self) -> Dict:
         year_bcd = self.data[120]
         week_bcd = self.data[121]
@@ -441,14 +502,14 @@ class DDR3Decoder:
         """
         Parse Intel XMP (DDR3) profile block at 176..255.
 
-        Fixes vs. old version:
+        Fixes to check
         • Validate header (0x0C, 0x4A) and use revision at [178].
         • Treat XMP fields as LITTLE‑ENDIAN words where appropriate.
         • tCKmin is a 16‑bit MTB count (not a single byte). Multiply by SPD MTB.
         • Voltage is a 16‑bit little‑endian value in mV → divide by 1000.
         • Keep byte layout you relied on; profile 2 is +35 bytes from profile 1.
 
-        Layout used here (per your existing offsets, normalized):
+        Layout used here (offsets, normalized):
         Profile 1 base = 182
             +0..+1 : VDD in mV (u16 LE)
             +2..+3 : tCKmin in MTB units (u16 LE)
