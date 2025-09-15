@@ -1,0 +1,229 @@
+<!doctype html><html><head><meta charset='utf-8'><title>SPD Index</title><style>body{font-family:system-ui,Arial,sans-serif}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:6px}th{background:#f3f3f3;text-align:left}code{font-family:ui-monospace,Consolas,monospace}</style></head><body>
+                <style>
+                #specsModal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:9999}
+                #specsBox{background:#fff;max-width:1000px;width:95%;max-height:85vh;overflow:auto;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+                #specsHdr{display:flex;gap:8px;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #eee;position:sticky;top:0;background:#fff;z-index:1}
+                #specsBody{padding:14px}
+                #specsBody pre{white-space:pre-wrap;word-break:break-word;border:1px dashed #ddd;padding:8px;border-radius:8px;background:#fafafa}
+                .viewbtn,.chip{padding:4px 8px;border:1px solid #888;background:#f8f8f8;border-radius:6px;cursor:pointer}
+                .viewbtn:hover{background:#eee}
+                .chip{font-size:.85em}
+                .sec{margin:14px 0;border:1px solid #eee;border-radius:8px}
+                .sec h3{margin:0;padding:8px 12px;border-bottom:1px solid #eee;background:#f7f7f7}
+                .kv{display:grid;grid-template-columns:220px 1fr;gap:6px 12px;padding:10px 12px}
+                .kv div.key{color:#555}
+                .kv code{font-family:ui-monospace,Consolas,monospace}
+                .bad{color:#b00020;font-weight:600}
+                .ok{color:#0a7f3f;font-weight:600}
+                .mono{font-family:ui-monospace,Consolas,monospace}
+                .small{font-size:.92em;color:#666}
+                </style>
+
+                <div id="specsModal">
+                <div id="specsBox">
+                    <div id="specsHdr">
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <strong>SPD Specs</strong>
+                        <span id="specsMeta" class="small mono"></span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <button id="specsToggle" class="chip">Raw JSON</button>
+                        <button id="specsClose" class="viewbtn">Close</button>
+                    </div>
+                    </div>
+                    <div id="specsBody">
+                    <div id="specsFormatted"></div>
+                    <pre id="specsRaw" style="display:none">Loading…</pre>
+                    </div>
+                </div>
+                </div>
+
+                <script>
+
+                function isPlainObject(v){ return v && typeof v === "object" && !Array.isArray(v); }
+                function isPrimitive(v){ return v===null || (typeof v!=="object" && typeof v!=="function"); }
+
+                (function(){
+                const modal = document.getElementById('specsModal');
+                const btnClose = document.getElementById('specsClose');
+                const btnToggle = document.getElementById('specsToggle');
+                const rawPre = document.getElementById('specsRaw');
+                const formatted = document.getElementById('specsFormatted');
+                const meta = document.getElementById('specsMeta');
+                let showRaw = false;
+
+                function show(){ modal.style.display='flex'; }
+                function hide(){ modal.style.display='none'; rawPre.textContent=''; formatted.innerHTML=''; meta.textContent=''; showRaw=false; updateToggle(); }
+                function updateToggle(){ btnToggle.textContent = showRaw ? "Formatted" : "Raw JSON"; rawPre.style.display = showRaw ? "block" : "none"; formatted.style.display = showRaw ? "none" : "block"; }
+
+                btnClose.addEventListener('click', hide);
+                modal.addEventListener('click', (e)=>{ if(e.target===modal) hide(); });
+                btnToggle.addEventListener('click', ()=>{ showRaw = !showRaw; updateToggle(); });
+
+                // Heuristics & helpers
+                const secTitles = [
+                    "SPD General","Module Configuration","SDRAM Addressing",
+                    "SDRAM Optional Features","SDRAM Thermal & Refresh Features",
+                    "Module Mechanical Details","Registered/Buffered Info",
+                    "JEDEC Timing Parameters (ns)","Timings in Clocks (at tCKmin)",
+                    "Standard JEDEC Down-clock Profiles","Manufacturing Information",
+                    "HP SmartMemory Information","SPD CRC Verification","Undecoded/Reserved Gaps"
+                ];
+
+                function fmtHex(val, width=2){
+                    if (val === null || val === undefined) return "";
+                        if (typeof val === "number") {
+                            const w = Math.max(1, width|0);
+                            const hex = (val >>> 0).toString(16).toUpperCase().padStart(w, "0");
+                            return "0x" + hex;
+                        }
+                        if (typeof val === "string" && /^[0-9a-fA-F]+$/.test(val) && val.length % 2 === 0 && val.length <= 64) {
+                            return "0x" + val.toUpperCase();
+                        }
+                    return String(val);
+                }
+
+                function labelize(k){
+                    // prettify typical JSON keys
+                    return k.replace(/_/g," ")
+                            .replace(/ids?/gi, m => m.toUpperCase())
+                            .replace(/spd/gi, "SPD")
+                            .replace(/hpt/gi, "HPT")
+                            .replace(/crc/gi, "CRC")
+                            .replace(/jedec/gi, "JEDEC")
+                            .replace(/dram/gi, "DRAM")
+                            .replace(/mfg/gi, "Mfg")
+                            .replace(/tc[kx]/gi, m => m.toUpperCase())
+                            .replace(/ns/gi, "ns")
+                            .replace(/cl/gi, "CL")
+                            .replace(/x(\d+)/gi, "x$1")
+                            .replace(/pc[2345]-?/i, m => m.toUpperCase());
+                }
+
+                function fmtVal(key, val){
+                    // Hex-ish keys show in hex code
+                    if (/(_hex|_u32|_crc|crc_|_id|_code|_offset|serial)/i.test(key) && (typeof val === "number" || typeof val === "string")) {
+                        return "<code>" + fmtHex(val, 8) + "</code>";
+                    }
+                    if (isPrimitive(val)) return String(val);
+                    if (Array.isArray(val)) return renderArray(val);
+                    if (isPlainObject(val)) return renderKVTable(val);
+                    return String(val);
+                }
+
+                function renderArray(arr){
+                    if (arr.length === 0) return "[]";
+                    const allPrimitive = arr.every(isPrimitive);
+                    const allObjects   = arr.every(isPlainObject);
+                    if (allPrimitive) {
+                        return "<code>" + arr.join(", ") + "</code>";
+                    }
+                    if (allObjects) {
+                        // Build a table with union of keys
+                        const keySet = new Set();
+                        arr.forEach(o => Object.keys(o).forEach(k => keySet.add(k)));
+                        const keys = Array.from(keySet);
+                        const head = keys.map(k => `<th>${labelize(k)}</th>`).join("");
+                        const rows = arr.map(o => {
+                        const tds = keys.map(k => `<td>${fmtVal(k, o[k] ?? "")}</td>`).join("");
+                        return `<tr>${tds}</tr>`;
+                        }).join("");
+                        return `<div style="overflow:auto"><table class="kv" style="display:table;width:auto">
+                        <thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+                    }
+                    // Mixed types—fallback: list each item with JSON
+                    const items = arr.map(v => `<li>${isPlainObject(v) ? renderKVTable(v) : "<code>"+String(v)+"</code>"}</li>`).join("");
+                    return `<ul>${items}</ul>`;
+                }
+
+                function renderKVTable(obj){
+                const rows = Object.keys(obj).map(k => {
+                    return `<div class="key">${labelize(k)}</div><div class="val">${fmtVal(k, obj[k])}</div>`;
+                }).join("");
+                return `<div class="kv">${rows}</div>`;
+                }
+
+                function asKV(key, val){
+                const k = labelize(key);
+                return `<div class="key">${k}</div><div class="val">${fmtVal(key, val)}</div>`;
+                }
+
+                function renderSection(title, content){
+                    return `<div class="sec"><h3>${title}</h3>${content}</div>`;
+                }
+
+                function sectionFromFlatObject(obj){
+                    return renderSection("Details", renderKVTable(obj));
+                }
+
+                function renderTop(decoded){
+                    let out = "";
+                    // If structured by known headings (your spd_tool does this), show them in order:
+                    let shownAny = false;
+                    for (const sec of secTitles) {
+                    if (decoded[sec]) {
+                        out += renderSection(sec, renderKVTable(decoded[sec]));
+                        shownAny = true;
+                    }
+                    }
+                    // Show leftover keys (not in the known headings) in a final section
+                    const leftovers = {};
+                    if (typeof decoded === "object") {
+                    for (const k of Object.keys(decoded)) {
+                        if (!secTitles.includes(k)) leftovers[k] = decoded[k];
+                    }
+                    }
+                    if (!shownAny) {
+                    // No known headings → try to present everything nicely
+                    if (typeof decoded === "object" && !Array.isArray(decoded)) {
+                        out += sectionFromFlatObject(decoded);
+                    } else {
+                        out += `<pre class="mono">${escapeHTML(JSON.stringify(decoded,null,2))}</pre>`;
+                    }
+                    } else if (Object.keys(leftovers).length) {
+                    out += renderSection("Other", renderKVTable(leftovers));
+                    }
+                    return out;
+                }
+
+                function escapeHTML(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+                async function viewJson(jsonPath, rowMeta){
+                    try{
+                    formatted.innerHTML = "";
+                    rawPre.textContent = "Loading…";
+                    show();
+                    const resp = await fetch(jsonPath);
+                    if(!resp.ok){ rawPre.textContent = "Failed to load JSON: " + resp.status; showRaw=true; updateToggle(); return; }
+                    const txt = await resp.text();
+                    rawPre.textContent = txt;
+                    let decoded;
+                    try { decoded = JSON.parse(txt); }
+                    catch (e) { showRaw = true; updateToggle(); return; }
+
+                    // Populate header meta (nice to show at top)
+                    meta.textContent = rowMeta || "";
+
+                    // Build formatted view
+                    formatted.innerHTML = renderTop(decoded);
+                    showRaw = false;
+                    updateToggle();
+                    }catch(err){
+                    rawPre.textContent = "Error: " + err;
+                    showRaw = true;
+                    updateToggle();
+                    }
+                }
+
+                // Wire up table buttons
+                document.addEventListener('click', (e) => {
+                    const btn = e.target.closest('.viewbtn[data-json]');
+                    if(!btn) return;
+                    const jsonPath = btn.getAttribute('data-json');
+                    const rowMeta = btn.getAttribute('data-meta') || "";
+                    viewJson(jsonPath, rowMeta);
+                });
+                })();
+                </script>
+
+                <h1>SPD Catalog</h1><p>Generated 2025-09-15 07:30 UTC</p><table><tr><th>Type</th><th>Vendor</th><th>Part Number</th><th>Serial</th><th>HPT</th><th>CRC Status</th><th>Stored CRC</th><th>Computed CRC</th><th>File</th><th>View Specs</th></tr><tr><td>DDR3</td><td>JEDEC(b00,c00)</td><td>Unknown</td><td><code>0x00000000</code></td><td><code></code></td><td>bad</td><td><code>0x06A2</code></td><td><code>0x1CD5</code></td><td><a href='DDR3/JEDEC(b00_c00)/Unknown/Unknown__0x00000000.spd.bin'>DDR3/JEDEC(b00_c00)/Unknown/Unknown__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b00_c00)/Unknown/Unknown__0x00000000.spd.json' data-meta='DDR3 · Unknown · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b01,c98)</td><td>9905594-001.A00LF </td><td><code>0xB3C91662</code></td><td><code></code></td><td>ok</td><td><code>0xE05A</code></td><td><code>0xE05A</code></td><td><a href='DDR3/JEDEC(b01_c98)/9905594-001.A00LF/9905594-001.A00LF__0xB3C91662.spd.bin'>DDR3/JEDEC(b01_c98)/9905594-001.A00LF/9905594-001.A00LF__0xB3C91662.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b01_c98)/9905594-001.A00LF/9905594-001.A00LF__0xB3C91662.spd.json' data-meta='DDR3 · 9905594-001.A00LF  · 0xB3C91662'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b01,c98)</td><td>9905594-001.A00LF </td><td><code>0xB3C91662</code></td><td><code></code></td><td>ok</td><td><code>0x920A</code></td><td><code>0x920A</code></td><td><a href='DDR3/JEDEC(b01_c98)/9905594-001.A00LF/9905594-001.A00LF__0xB3C91662.spd.bin'>DDR3/JEDEC(b01_c98)/9905594-001.A00LF/9905594-001.A00LF__0xB3C91662.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b01_c98)/9905594-001.A00LF/9905594-001.A00LF__0xB3C91662.spd.json' data-meta='DDR3 · 9905594-001.A00LF  · 0xB3C91662'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b01,c98)</td><td>9905594-014.A00LF </td><td><code>0xD3D91425</code></td><td><code></code></td><td>ok</td><td><code>0x1314</code></td><td><code>0x1314</code></td><td><a href='DDR3/JEDEC(b01_c98)/9905594-014.A00LF/9905594-014.A00LF__0xD3D91425.spd.bin'>DDR3/JEDEC(b01_c98)/9905594-014.A00LF/9905594-014.A00LF__0xD3D91425.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b01_c98)/9905594-014.A00LF/9905594-014.A00LF__0xD3D91425.spd.json' data-meta='DDR3 · 9905594-014.A00LF  · 0xD3D91425'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b01,c98)</td><td>9905594-017.A00LF </td><td><code>0xC6611E51</code></td><td><code></code></td><td>ok</td><td><code>0x93B0</code></td><td><code>0x93B0</code></td><td><a href='DDR3/JEDEC(b01_c98)/9905594-017.A00LF/9905594-017.A00LF__0xC6611E51.spd.bin'>DDR3/JEDEC(b01_c98)/9905594-017.A00LF/9905594-017.A00LF__0xC6611E51.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b01_c98)/9905594-017.A00LF/9905594-017.A00LF__0xC6611E51.spd.json' data-meta='DDR3 · 9905594-017.A00LF  · 0xC6611E51'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CM3X2G1600C9      </td><td><code>0x00000000</code></td><td><code></code></td><td>bad</td><td><code>0x0BC9</code></td><td><code>0x66CD</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CM3X2G1600C9/CM3X2G1600C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CM3X2G1600C9/CM3X2G1600C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CM3X2G1600C9/CM3X2G1600C9__0x00000000.spd.json' data-meta='DDR3 · CM3X2G1600C9       · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CML16GX3M2A1600C9 </td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0x93D5</code></td><td><code>0x93D5</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CML16GX3M2A1600C9/CML16GX3M2A1600C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CML16GX3M2A1600C9/CML16GX3M2A1600C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CML16GX3M2A1600C9/CML16GX3M2A1600C9__0x00000000.spd.json' data-meta='DDR3 · CML16GX3M2A1600C9  · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CMSO4GX3M1C1333C9 </td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0xF717</code></td><td><code>0xF717</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CMSO4GX3M1C1333C9/CMSO4GX3M1C1333C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CMSO4GX3M1C1333C9/CMSO4GX3M1C1333C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CMSO4GX3M1C1333C9/CMSO4GX3M1C1333C9__0x00000000.spd.json' data-meta='DDR3 · CMSO4GX3M1C1333C9  · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CMSO4GX3M1C1333C9 </td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0xFA1F</code></td><td><code>0xFA1F</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CMSO4GX3M1C1333C9/CMSO4GX3M1C1333C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CMSO4GX3M1C1333C9/CMSO4GX3M1C1333C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CMSO4GX3M1C1333C9/CMSO4GX3M1C1333C9__0x00000000.spd.json' data-meta='DDR3 · CMSO4GX3M1C1333C9  · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CMT4GX3M2A2133C9  </td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0x115B</code></td><td><code>0x115B</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CMT4GX3M2A2133C9/CMT4GX3M2A2133C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CMT4GX3M2A2133C9/CMT4GX3M2A2133C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CMT4GX3M2A2133C9/CMT4GX3M2A2133C9__0x00000000.spd.json' data-meta='DDR3 · CMT4GX3M2A2133C9   · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CMX4GX3M2A1600C9  </td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0x9E5E</code></td><td><code>0x9E5E</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CMX4GX3M2A1600C9/CMX4GX3M2A1600C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CMX4GX3M2A1600C9/CMX4GX3M2A1600C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CMX4GX3M2A1600C9/CMX4GX3M2A1600C9__0x00000000.spd.json' data-meta='DDR3 · CMX4GX3M2A1600C9   · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CMX8GX3M2A1333C9  </td><td><code>0x00000000</code></td><td><code></code></td><td>bad</td><td><code>0xE5FC</code></td><td><code>0xC592</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CMX8GX3M2A1333C9/CMX8GX3M2A1333C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CMX8GX3M2A1333C9/CMX8GX3M2A1333C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CMX8GX3M2A1333C9/CMX8GX3M2A1333C9__0x00000000.spd.json' data-meta='DDR3 · CMX8GX3M2A1333C9   · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CMX8GX3M2A1600C9  </td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0xE5FC</code></td><td><code>0xE5FC</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CMX8GX3M2A1600C9/CMX8GX3M2A1600C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CMX8GX3M2A1600C9/CMX8GX3M2A1600C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CMX8GX3M2A1600C9/CMX8GX3M2A1600C9__0x00000000.spd.json' data-meta='DDR3 · CMX8GX3M2A1600C9   · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CMX8GX3M4A1333C9  </td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0x9B33</code></td><td><code>0x9B33</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CMX8GX3M4A1333C9/CMX8GX3M4A1333C9__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CMX8GX3M4A1333C9/CMX8GX3M4A1333C9__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CMX8GX3M4A1333C9/CMX8GX3M4A1333C9__0x00000000.spd.json' data-meta='DDR3 · CMX8GX3M4A1333C9   · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b02,c9E)</td><td>CMY16GX3M2A2400C11</td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0xC8E2</code></td><td><code>0xC8E2</code></td><td><a href='DDR3/JEDEC(b02_c9E)/CMY16GX3M2A2400C11/CMY16GX3M2A2400C11__0x00000000.spd.bin'>DDR3/JEDEC(b02_c9E)/CMY16GX3M2A2400C11/CMY16GX3M2A2400C11__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b02_c9E)/CMY16GX3M2A2400C11/CMY16GX3M2A2400C11__0x00000000.spd.json' data-meta='DDR3 · CMY16GX3M2A2400C11 · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b04,cCB)</td><td>DDR3 2400         </td><td><code>0x13C60000</code></td><td><code></code></td><td>ok</td><td><code>0x0012</code></td><td><code>0x0012</code></td><td><a href='DDR3/JEDEC(b04_cCB)/DDR3_2400/DDR3_2400__0x13C60000.spd.bin'>DDR3/JEDEC(b04_cCB)/DDR3_2400/DDR3_2400__0x13C60000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b04_cCB)/DDR3_2400/DDR3_2400__0x13C60000.spd.json' data-meta='DDR3 · DDR3 2400          · 0x13C60000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b04,cCD)</td><td>F3-1600C9-8GAR</td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0xE1A9</code></td><td><code>0xE1A9</code></td><td><a href='DDR3/JEDEC(b04_cCD)/F3-1600C9-8GAR/F3-1600C9-8GAR__0x00000000.spd.bin'>DDR3/JEDEC(b04_cCD)/F3-1600C9-8GAR/F3-1600C9-8GAR__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b04_cCD)/F3-1600C9-8GAR/F3-1600C9-8GAR__0x00000000.spd.json' data-meta='DDR3 · F3-1600C9-8GAR · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b04,cCD)</td><td>F3-2400C11-4GAB</td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0xB458</code></td><td><code>0xB458</code></td><td><a href='DDR3/JEDEC(b04_cCD)/F3-2400C11-4GAB/F3-2400C11-4GAB__0x00000000.spd.bin'>DDR3/JEDEC(b04_cCD)/F3-2400C11-4GAB/F3-2400C11-4GAB__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b04_cCD)/F3-2400C11-4GAB/F3-2400C11-4GAB__0x00000000.spd.json' data-meta='DDR3 · F3-2400C11-4GAB · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b04,cCD)</td><td>F3-2400C11-8GAR</td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0xE1A9</code></td><td><code>0xE1A9</code></td><td><a href='DDR3/JEDEC(b04_cCD)/F3-2400C11-8GAR/F3-2400C11-8GAR__0x00000000.spd.bin'>DDR3/JEDEC(b04_cCD)/F3-2400C11-8GAR/F3-2400C11-8GAR__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b04_cCD)/F3-2400C11-8GAR/F3-2400C11-8GAR__0x00000000.spd.json' data-meta='DDR3 · F3-2400C11-8GAR · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b80,c2C)</td><td>36KSZ2G72LD1G6E2A7</td><td><code>0x00000000</code></td><td><code></code></td><td>ok</td><td><code>0xDDB9</code></td><td><code>0xDDB9</code></td><td><a href='DDR3/JEDEC(b80_c2C)/36KSZ2G72LD1G6E2A7/36KSZ2G72LD1G6E2A7__0x00000000.spd.bin'>DDR3/JEDEC(b80_c2C)/36KSZ2G72LD1G6E2A7/36KSZ2G72LD1G6E2A7__0x00000000.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b80_c2C)/36KSZ2G72LD1G6E2A7/36KSZ2G72LD1G6E2A7__0x00000000.spd.json' data-meta='DDR3 · 36KSZ2G72LD1G6E2A7 · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b80,c2C)</td><td>_36JSF2G72PZ-1G9P1</td><td><code>0x00000000</code></td><td><code>0x0CE5D749</code></td><td>ok</td><td><code>0xA2EC</code></td><td><code>0xA2EC</code></td><td><a href='DDR3/JEDEC(b80_c2C)/_36JSF2G72PZ-1G9P1/_36JSF2G72PZ-1G9P1__0x00000000__0x0CE5D749.spd.bin'>DDR3/JEDEC(b80_c2C)/_36JSF2G72PZ-1G9P1/_36JSF2G72PZ-1G9P1__0x00000000__0x0CE5D749.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b80_c2C)/_36JSF2G72PZ-1G9P1/_36JSF2G72PZ-1G9P1__0x00000000__0x0CE5D749.spd.json' data-meta='DDR3 · _36JSF2G72PZ-1G9P1 · 0x00000000'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b80,cAD)</td><td>HMT125S6TFR8C-G7  </td><td><code>0xB64D1213</code></td><td><code></code></td><td>ok</td><td><code>0xB8E3</code></td><td><code>0xB8E3</code></td><td><a href='DDR3/JEDEC(b80_cAD)/HMT125S6TFR8C-G7/HMT125S6TFR8C-G7__0xB64D1213.spd.bin'>DDR3/JEDEC(b80_cAD)/HMT125S6TFR8C-G7/HMT125S6TFR8C-G7__0xB64D1213.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b80_cAD)/HMT125S6TFR8C-G7/HMT125S6TFR8C-G7__0xB64D1213.spd.json' data-meta='DDR3 · HMT125S6TFR8C-G7   · 0xB64D1213'>View</button></td></tr><tr><td>DDR3</td><td>JEDEC(b85,c9B)</td><td>BLT8G3D1869DT1TX0.</td><td><code>0x07B0DEC0</code></td><td><code></code></td><td>ok</td><td><code>0xBDB1</code></td><td><code>0xBDB1</code></td><td><a href='DDR3/JEDEC(b85_c9B)/BLT8G3D1869DT1TX0/BLT8G3D1869DT1TX0.__0x07B0DEC0.spd.bin'>DDR3/JEDEC(b85_c9B)/BLT8G3D1869DT1TX0/BLT8G3D1869DT1TX0.__0x07B0DEC0.spd.bin</a></td><td><button class='viewbtn' data-json='DDR3/JEDEC(b85_c9B)/BLT8G3D1869DT1TX0/BLT8G3D1869DT1TX0.__0x07B0DEC0.spd.json' data-meta='DDR3 · BLT8G3D1869DT1TX0. · 0x07B0DEC0'>View</button></td></tr></table></body></html>

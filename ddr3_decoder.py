@@ -8,6 +8,7 @@
 from typing import Dict, List, Optional, Tuple
 import sys
 import math
+from ddr3_xmp_decoder import decode_xmp # Import the new function
 
 # --- Constants and Data Maps for DDR3 ---
 
@@ -104,9 +105,10 @@ class DDR3Decoder:
         if reg_info:
             decoded["registered_info"] = reg_info
 
-        xmp = self._decode_xmp()
+        xmp = decode_xmp(self.data) # Call the imported function
         if xmp:
             decoded.update(xmp)
+            
         decoded["crc_info"] = self._detect_base_crc()
         decoded.update(self._find_gaps())
         return decoded

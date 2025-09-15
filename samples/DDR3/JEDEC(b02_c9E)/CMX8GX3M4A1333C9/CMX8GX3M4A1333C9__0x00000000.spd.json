@@ -1,0 +1,124 @@
+{
+  "general": {
+    "spd_revision": "1.0",
+    "memory_type": "DDR3 SDRAM",
+    "module_type": "UDIMM",
+    "byte0_info": "CRC Coverage: 0..116; Total Size: 256 bytes; Bytes Used: 176",
+    "voltages_supported": [
+      "1.5V"
+    ]
+  },
+  "module_size_GiB": 2.0,
+  "module_size_str": "2.0 GiB",
+  "chip_size_str": "2Gb",
+  "ranks": 1,
+  "sdram_device_width": 8,
+  "total_chips": 8,
+  "total_chips_str": "8",
+  "data_width_bits": 64,
+  "ecc_bits": 0,
+  "bank_address_bits": 8,
+  "row_address_bits": 15,
+  "col_address_bits": 10,
+  "addressing_module_size_GiB": 2.0,
+  "sdram_features": {
+    "dll_off_support": true,
+    "rzq_7_support": true,
+    "rzq_6_support": true,
+    "pasr_support": true,
+    "odts_readout_support": false,
+    "asr_support": false,
+    "ext_temp_refresh_1x": false,
+    "ext_temp_range_support": true,
+    "thermal_sensor_present": false
+  },
+  "timings_ns": {
+    "tCKmin": 1.5,
+    "tAAmin": 13.5,
+    "tRCDmin": 13.5,
+    "tRPmin": 13.5,
+    "tRASmin": 36.0,
+    "tRCmin": 50.625,
+    "tRFCmin": 160.0
+  },
+  "timings_clocks": {
+    "CL": 9,
+    "tRCD": 9,
+    "tRP": 9,
+    "tRAS": 24
+  },
+  "cas_latencies_supported": [
+    6,
+    7,
+    8,
+    9
+  ],
+  "max_data_rate_MTps": 1333,
+  "jedec_downbins": [
+    {
+      "speed": "DDR3-800",
+      "timings": "6-6-6-15"
+    },
+    {
+      "speed": "DDR3-1066",
+      "timings": "8-8-8-20"
+    }
+  ],
+  "jedec_standard_name": "PC3-10600",
+  "manufacturing": {
+    "module_part_number": "CMX8GX3M4A1333C9",
+    "module_die_revision": 0,
+    "module_pcb_revision": 0,
+    "manufacturing_location": 1,
+    "module_mfg_id": "Corsair (Bank 2, Code 0x9E)",
+    "dram_mfg_id": "Unknown (Bank 0, Code 0x00)",
+    "serial_number": "00000000",
+    "manufacture_date": "2000-W00"
+  },
+  "hpt_info": {
+    "present": false,
+    "code": null
+  },
+  "mechanical_info": {
+    "nominal_height": "30 < height <= 31 mm",
+    "max_thickness_front": "2 < thickness <= 3 mm",
+    "max_thickness_back": "2 < thickness <= 3 mm",
+    "ref_raw_card": "A",
+    "ref_raw_card_rev": 0,
+    "rank_1_mapping_mirrored": true
+  },
+  "unbuffered_info": {
+    "nominal_height": "30 < height <= 31 mm",
+    "max_thickness_front": "2 < thickness <= 3 mm",
+    "max_thickness_back": "2 < thickness <= 3 mm",
+    "ref_raw_card": "A",
+    "ref_raw_card_rev": 0,
+    "rank_1_mapping_mirrored": true
+  },
+  "crc_info": {
+    "status": "VALID",
+    "stored": 39731,
+    "computed": 39731,
+    "coverage": "0..116",
+    "variant": "XMODEM",
+    "coverage_match": true
+  },
+  "undecoded_gaps": [
+    [
+      33,
+      33
+    ],
+    [
+      39,
+      59
+    ],
+    [
+      64,
+      116
+    ],
+    [
+      150,
+      255
+    ]
+  ]
+}

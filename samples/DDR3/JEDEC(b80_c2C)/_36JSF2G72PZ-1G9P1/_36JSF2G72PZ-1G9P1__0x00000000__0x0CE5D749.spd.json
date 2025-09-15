@@ -1,0 +1,141 @@
+{
+  "general": {
+    "spd_revision": "1.3",
+    "memory_type": "DDR3 SDRAM",
+    "module_type": "RDIMM",
+    "byte0_info": "CRC Coverage: 0..116; Total Size: 256 bytes; Bytes Used: 176",
+    "voltages_supported": [
+      "1.5V"
+    ]
+  },
+  "module_size_GiB": 16.0,
+  "module_size_str": "16.0 GiB + 2.0 GiB ECC",
+  "chip_size_str": "4Gb",
+  "ranks": 2,
+  "sdram_device_width": 4,
+  "total_chips": 36,
+  "total_chips_str": "32 + 4 ECC",
+  "data_width_bits": 64,
+  "ecc_bits": 8,
+  "bank_address_bits": 8,
+  "row_address_bits": 16,
+  "col_address_bits": 11,
+  "addressing_module_size_GiB": 18.0,
+  "sdram_features": {
+    "dll_off_support": true,
+    "rzq_7_support": true,
+    "rzq_6_support": true,
+    "pasr_support": false,
+    "odts_readout_support": false,
+    "asr_support": true,
+    "ext_temp_refresh_1x": false,
+    "ext_temp_range_support": true,
+    "thermal_sensor_present": true
+  },
+  "timings_ns": {
+    "tCKmin": 1.071,
+    "tAAmin": 13.125,
+    "tRCDmin": 13.125,
+    "tRPmin": 13.125,
+    "tRASmin": 34.0,
+    "tRCmin": 47.125,
+    "tRFCmin": 260.0
+  },
+  "timings_clocks": {
+    "CL": 13,
+    "tRCD": 13,
+    "tRP": 13,
+    "tRAS": 32
+  },
+  "cas_latencies_supported": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    13
+  ],
+  "max_data_rate_MTps": 1867,
+  "jedec_downbins": [
+    {
+      "speed": "DDR3-800",
+      "timings": "6-6-6-14"
+    },
+    {
+      "speed": "DDR3-1066",
+      "timings": "7-7-7-19"
+    },
+    {
+      "speed": "DDR3-1333",
+      "timings": "9-9-9-23"
+    },
+    {
+      "speed": "DDR3-1600",
+      "timings": "11-11-11-28"
+    },
+    {
+      "speed": "DDR3-1866",
+      "timings": "13-13-13-32"
+    }
+  ],
+  "jedec_standard_name": "PC3-14900",
+  "manufacturing": {
+    "module_part_number": "_36JSF2G72PZ-1G9P1",
+    "module_die_revision": 80,
+    "module_pcb_revision": 49,
+    "manufacturing_location": 0,
+    "module_mfg_id": "Micron Technology (Bank 0, Code 0x2C)",
+    "dram_mfg_id": "Micron Technology (Bank 0, Code 0x2C)",
+    "serial_number": "00000000",
+    "manufacture_date": "2000-W00"
+  },
+  "hpt_info": {
+    "present": true,
+    "code": "49 D7 E5 0C"
+  },
+  "mechanical_info": {
+    "nominal_height": "29 < height <= 30 mm",
+    "max_thickness_front": "1 < thickness <= 2 mm",
+    "max_thickness_back": "1 < thickness <= 2 mm",
+    "ref_raw_card": "E",
+    "ref_raw_card_rev": 2,
+    "rank_1_mapping_mirrored": true
+  },
+  "registered_info": {
+    "mfg_id_offset": 65,
+    "mfg_id": "Unknown (Bank 6, Code 0x32)",
+    "revision": 16,
+    "dram_rows": "2 rows",
+    "registers": "1 register",
+    "heat_spreader": false,
+    "control_words": "0050550000000000"
+  },
+  "crc_info": {
+    "status": "VALID",
+    "stored": 41708,
+    "computed": 41708,
+    "coverage": "0..116",
+    "variant": "XMODEM",
+    "coverage_match": true
+  },
+  "undecoded_gaps": [
+    [
+      33,
+      33
+    ],
+    [
+      39,
+      59
+    ],
+    [
+      78,
+      116
+    ],
+    [
+      150,
+      175
+    ]
+  ]
+}

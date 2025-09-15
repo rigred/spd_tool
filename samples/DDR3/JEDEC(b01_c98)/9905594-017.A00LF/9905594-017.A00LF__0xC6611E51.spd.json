@@ -1,0 +1,126 @@
+{
+  "general": {
+    "spd_revision": "1.1",
+    "memory_type": "DDR3 SDRAM",
+    "module_type": "SO-DIMM",
+    "byte0_info": "CRC Coverage: 0..116; Total Size: 256 bytes; Bytes Used: 176",
+    "voltages_supported": [
+      "1.5V",
+      "1.35V"
+    ]
+  },
+  "module_size_GiB": 2.0,
+  "module_size_str": "2.0 GiB",
+  "chip_size_str": "4Gb",
+  "ranks": 1,
+  "sdram_device_width": 16,
+  "total_chips": 4,
+  "total_chips_str": "4",
+  "data_width_bits": 64,
+  "ecc_bits": 0,
+  "bank_address_bits": 8,
+  "row_address_bits": 15,
+  "col_address_bits": 10,
+  "addressing_module_size_GiB": 2.0,
+  "sdram_features": {
+    "dll_off_support": true,
+    "rzq_7_support": true,
+    "rzq_6_support": true,
+    "pasr_support": false,
+    "odts_readout_support": false,
+    "asr_support": true,
+    "ext_temp_refresh_1x": false,
+    "ext_temp_range_support": true,
+    "thermal_sensor_present": false
+  },
+  "timings_ns": {
+    "tCKmin": 1.5,
+    "tAAmin": 13.125,
+    "tRCDmin": 13.125,
+    "tRPmin": 13.125,
+    "tRASmin": 36.0,
+    "tRCmin": 49.125,
+    "tRFCmin": 260.0
+  },
+  "timings_clocks": {
+    "CL": 9,
+    "tRCD": 9,
+    "tRP": 9,
+    "tRAS": 24
+  },
+  "cas_latencies_supported": [
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "max_data_rate_MTps": 1333,
+  "jedec_downbins": [
+    {
+      "speed": "DDR3-800",
+      "timings": "6-6-6-15"
+    },
+    {
+      "speed": "DDR3-1066",
+      "timings": "7-7-7-20"
+    }
+  ],
+  "jedec_standard_name": "PC3L-10600",
+  "manufacturing": {
+    "module_part_number": "9905594-017.A00LF",
+    "module_die_revision": 0,
+    "module_pcb_revision": 0,
+    "manufacturing_location": 5,
+    "module_mfg_id": "Kingston (Bank 1, Code 0x98)",
+    "dram_mfg_id": "Unknown (Bank 0, Code 0x00)",
+    "serial_number": "511E61C6",
+    "manufacture_date": "2015-W33"
+  },
+  "hpt_info": {
+    "present": false,
+    "code": null
+  },
+  "mechanical_info": {
+    "nominal_height": "29 < height <= 30 mm",
+    "max_thickness_front": "1 < thickness <= 2 mm",
+    "max_thickness_back": "1 < thickness <= 2 mm",
+    "ref_raw_card": "C",
+    "ref_raw_card_rev": 3,
+    "rank_1_mapping_mirrored": false
+  },
+  "unbuffered_info": {
+    "nominal_height": "29 < height <= 30 mm",
+    "max_thickness_front": "1 < thickness <= 2 mm",
+    "max_thickness_back": "1 < thickness <= 2 mm",
+    "ref_raw_card": "C",
+    "ref_raw_card_rev": 3,
+    "rank_1_mapping_mirrored": false
+  },
+  "crc_info": {
+    "status": "VALID",
+    "stored": 37808,
+    "computed": 37808,
+    "coverage": "0..116",
+    "variant": "XMODEM",
+    "coverage_match": true
+  },
+  "undecoded_gaps": [
+    [
+      33,
+      33
+    ],
+    [
+      39,
+      59
+    ],
+    [
+      64,
+      116
+    ],
+    [
+      150,
+      255
+    ]
+  ]
+}

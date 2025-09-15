@@ -11,15 +11,30 @@ import json
 import sys
 from spd_library import load_spd_file, hexdiff
 
+def _json_default(o):
+    # Make decoder output JSON-serializable.
+    if isinstance(o, (bytes, bytearray, memoryview)):
+        return bytes(o).hex()  # or list(o) if you prefer arrays of ints
+    if isinstance(o, set):
+        return sorted(o)
+    # Add other special cases if your decoded_data can include them
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
 def cmd_dump(args: argparse.Namespace):
     """Handles the 'dump' command."""
     spd = load_spd_file(args.spd)
     decoded_data = spd.get_decoded_data()
 
     if args.json:
-        with open(args.json, 'w') as f:
-            json.dump(decoded_data, f, indent=2)
-        print(f"[OK] Wrote decoded SPD data to {args.json}")
+        # Support stdout when path is '-' (common CLI idiom)
+        if args.json == "-":
+            json.dump(decoded_data, sys.stdout, indent=2, default=_json_default)
+            sys.stdout.write("\n")
+        else:
+            with open(args.json, "w", encoding="utf-8") as f:
+                json.dump(decoded_data, f, indent=2, default=_json_default)
+            # if you print a status line, print it to stderr so it doesn't pollute stdout:
+            print(f"[OK] Wrote decoded SPD data to {args.json}", file=sys.stderr)
         return
 
     # Use the decoder's pretty print method
@@ -74,6 +89,7 @@ def main():
     p_dump.add_argument("--spd", required=True, help="Input SPD file (.bin or text).")
     p_dump.add_argument("--json", help="Export decoded data to a JSON file.")
     p_dump.add_argument("--programmer", action="store_true", help="Show offsets, hex values, and undecoded gaps in dump output.")
+    p_dump.add_argument("--quiet", action="store_true", help="suppress status messages")
     p_dump.set_defaults(func=cmd_dump)
 
     # Diff command
