@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 from spd_library import load_spd_file, hexdiff
+from spd_smbus import main as smbus_main
 
 def _json_default(o):
     # Make decoder output JSON-serializable.
@@ -113,6 +114,14 @@ def main():
     p_patch.add_argument("--copy-partnum", action="store_true", help="Copy module part number (bytes 128-145).")
     p_patch.add_argument("--copy-range", action="append", help="Copy an arbitrary byte range START:END (e.g., 0x10:0x20).")
     p_patch.set_defaults(func=cmd_patch)
+
+    p = subparsers.add_parser("smbus", help="SMBus/I2C SPD ops (scan/read/write)")
+    p.add_argument("args", nargs=argparse.REMAINDER, help="pass-through to spd_smbus.py")
+    def _smbus_cmd(ns):
+    # forward args to the expansion tool's argparse
+        sys.exit(smbus_main(ns.args))
+    p.set_defaults(func=_smbus_cmd)
+
 
     args = parser.parse_args()
     try:
