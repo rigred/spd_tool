@@ -9,7 +9,7 @@ import argparse, os, sys, shutil, json, sqlite3, hashlib, time, html, re
 from collections import defaultdict
 from datetime import datetime, UTC
 from typing import List
-import shlex, subprocess, tempfile, json
+import shlex, subprocess, tempfile
 
 def json_sibling_path(spd_path: str) -> str:
     base, ext = os.path.splitext(spd_path)
@@ -104,10 +104,25 @@ def ensure_spd_json(spd_tool: str, spd_path: str, json_path: str,
 SPD128 = 128
 SPD256 = 256
 SPD512 = 512
+MEM_SDR  = 0x04  # SDR SDRAM
+MEM_DDR1 = 0x07  # DDR (aka DDR1)
 MEM_DDR2 = 0x08
 MEM_DDR3 = 0x0B
 MEM_DDR4 = 0x0C
-MEM_TYPES = {MEM_DDR2: "DDR2", MEM_DDR3: "DDR3", MEM_DDR4: "DDR4"}
+MEM_TYPES = {MEM_SDR: "SDR", MEM_DDR1: "DDR", MEM_DDR2: "DDR2", MEM_DDR3: "DDR3", MEM_DDR4: "DDR4"}
+
+# --- 8-bit SPD checksums (legacy base at 63, optional ext at 95) ---
+def checksum8(data: bytes) -> int:
+    return sum(data) & 0xFF
+
+# CRC-8 (polynomial 0x07) used by SDR/DDR SPD
+def crc8_jedec(data: bytes, init: int = 0x00) -> int:
+    crc = init & 0xFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if (crc & 0x80) else ((crc << 1) & 0xFF)
+    return crc
 
 # ---------------------- CRC helpers ------------------------
 def crc16_xmodem(data: bytes, init: int = 0x0000) -> int:
@@ -143,6 +158,121 @@ def file_sha256(path: str) -> str:
 
 def vendor_from_id(bank: int, code: int) -> str:
     return f"JEDEC(b{bank:02X},c{code:02X})"
+
+def looks_like_legacy_base(block: bytes) -> bool:
+    # Accept 128B or 256B images for SDR/DDR1 base block
+    return len(block) in (SPD128, SPD256)
+
+def looks_like_sdr(block: bytes) -> bool:
+    return len(block) in (SPD128, SPD256) and block[2] == MEM_SDR
+
+def looks_like_ddr1(block: bytes) -> bool:
+    return looks_like_legacy_base(block) and block[2] == MEM_DDR1
+
+def legacy_crc_pair(block: bytes) -> tuple[int|None, int|None, int|None, int|None, str]:
+    """
+    Return (stored_base8, computed_base8, stored_ext8, computed_ext8, status)
+    status is:
+      - 'ok'     if base (and ext if present) match
+      - 'bad'    if base mismatches (or ext present and mismatches)
+      - 'weak'   if base matches but ext region absent (len<96)
+    """
+    if not looks_like_legacy_base(block):
+        return (None, None, None, None, "n/a")
+
+    stored_base = block[63]
+    computed_base = checksum8(block[0:63])  # bytes 0..62
+
+    stored_ext = computed_ext = None
+    status = "ok" if stored_base == computed_base else "bad"
+
+    # Optional extension (64..94 -> byte 95)
+    if len(block) >= 96:
+        stored_ext = block[95]
+        computed_ext = checksum8(block[64:95])  # bytes 64..94
+        if status == "ok":
+            status = "ok" if stored_ext == computed_ext else "bad"
+    else:
+        if status == "ok":
+            status = "weak"
+
+    return (stored_base, computed_base, stored_ext, computed_ext, status)
+
+def parse_legacy_common(block: bytes, mem_type_label: str) -> dict:
+    """
+    Heuristic field map used by many SDR/DDR1 modules:
+      - JEDEC Mfg ID (bank, code) at 64,65
+      - Part Number ASCII at 73..90 (18 bytes)
+      - Mfg week/year at 93,94
+      - Serial (LE) at 95..98
+    These are common but not universal; we treat as best-effort.
+    """
+    bank = block[64] if len(block) > 64 else 0
+    code = block[65] if len(block) > 65 else 0
+    pn = ""
+    if len(block) >= 91:
+        pn = block[73:91].rstrip(b"\x00").decode("ascii", errors="replace")
+    wk = block[93] if len(block) > 93 else 0
+    yr_raw = block[94] if len(block) > 94 else 0
+    # Year heuristic: many modules store YY with 2000+; fall back if tiny
+    yr = 2000 + yr_raw if yr_raw < 100 else int(yr_raw)
+    serial = 0
+    if len(block) >= 99:
+        serial = (block[95] | (block[96] << 8) | (block[97] << 16) | (block[98] << 24)) & 0xFFFFFFFF
+
+    sb, cb, se, ce, st = legacy_crc_pair(block)
+
+    meta = {
+        "mem_type": mem_type_label,
+        "serial_u32_le": serial,
+        "mfg_week": wk, "mfg_year": yr,
+        "part_number_str": pn,
+        "mfg_id_bank": bank, "mfg_id_code": code,
+        "mfg_id_str": vendor_from_id(bank, code),
+        "crc_status": st,
+        # Store 8-bit checksums in the DDR3 fields to reuse schema/HTML:
+        "stored_crc": sb,       # 8-bit base
+        "computed_crc": cb,     # 8-bit base
+        "stored_crc_base": None,    # unused for legacy
+        "computed_crc_base": None,  # unused for legacy
+        "stored_crc_ext": se,       # 8-bit ext (optional)
+        "computed_crc_ext": ce,     # 8-bit ext (optional)
+    }
+    return meta
+
+def parse_sdr(block: bytes) -> dict:
+    bank, code = (block[64], block[65]) if len(block) > 65 else (0, 0)
+    pn = block[73:91].rstrip(b"\x00").decode("ascii", errors="replace") if len(block) >= 91 else ""
+    serial = int.from_bytes(block[95:99], "little", signed=False) if len(block) >= 99 else 0
+
+    s_base = block[63]
+    c_base = checksum8(block[0:63])
+
+    ext_region = block[64:95]
+    has_ext_payload = any(b != 0x00 for b in ext_region)
+    s_ext = block[95] if len(block) > 95 else 0
+    c_ext = checksum8(ext_region) if has_ext_payload else None
+
+    base_ok = (s_base == c_base)
+    ext_ok  = True if not has_ext_payload else (s_ext == c_ext)
+    status  = "ok" if (base_ok and ext_ok) else "bad"
+
+    return {
+        "mem_type": "SDR",
+        "serial_u32_le": serial,
+        "part_number_str": pn or "Unknown",
+        "mfg_id_bank": bank, "mfg_id_code": code,
+        "mfg_id_str": vendor_from_id(bank, code),
+        "crc_status": status,
+        "stored_crc": s_base,
+        "computed_crc": c_base,
+        "stored_crc_ext": s_ext if has_ext_payload else None,
+        "computed_crc_ext": c_ext if has_ext_payload else None,
+    }
+
+def parse_ddr1(block: bytes) -> dict:
+    return parse_legacy_common(block, "DDR")
+
 
 # ---------------------- DDR3 parse & CRCs ------------------
 def looks_like_ddr3(block: bytes) -> bool:
@@ -257,7 +387,7 @@ def scan_file_for_spd(path: str, step: int) -> List[dict]:
 
     n = len(data)
 
-    # DDR4 (catalog regardless of CRC validity)
+    # DDR4 (512B)
     for off, block in scan_windows(data, SPD512, step):
         if looks_like_ddr4(block):
             meta = parse_ddr4(block)
@@ -265,29 +395,39 @@ def scan_file_for_spd(path: str, step: int) -> List[dict]:
             if hpt: meta.update(hpt)
             results.append({"file": path, "file_offset": off, "spd_size": SPD512, "raw": block, **meta})
 
-    # DDR3 / DDR2 (256B). DDR3: catalog regardless of CRC validity
+    # 256B windows: DDR3, DDR2, DDR1, SDR (in that order)
     for off, block in scan_windows(data, SPD256, step):
         if looks_like_ddr3(block):
             meta = parse_ddr3(block)
-            hpt = extract_hp_hpt(block)
-            if hpt: meta.update(hpt)
-            results.append({"file": path, "file_offset": off, "spd_size": SPD256, "raw": block, **meta})
         elif looks_like_ddr2_spd(block):
             meta = parse_ddr2(block)
-            hpt = extract_hp_hpt(block)
-            if hpt: meta.update(hpt)
-            results.append({"file": path, "file_offset": off, "spd_size": SPD256, "raw": block, **meta})
+        elif looks_like_ddr1(block):
+            meta = parse_ddr1(block)
+        elif looks_like_sdr(block):
+            meta = parse_sdr(block)
+        else:
+            continue
+        hpt = extract_hp_hpt(block)
+        if hpt: meta.update(hpt)
+        results.append({"file": path, "file_offset": off, "spd_size": SPD256, "raw": block, **meta})
 
-    # DDR3 128B (only if file <256B to avoid dupes)
+    # 128B windows: DDR3, DDR1, SDR (avoid duplicates if larger blocks exist)
     if 128 <= n < 256:
         for off, block in scan_windows(data, SPD128, step):
             if looks_like_ddr3(block):
                 meta = parse_ddr3(block)
-                hpt = extract_hp_hpt(block)
-                if hpt: meta.update(hpt)
-                results.append({"file": path, "file_offset": off, "spd_size": SPD128, "raw": block, **meta})
+            elif looks_like_ddr1(block):
+                meta = parse_ddr1(block)
+            elif looks_like_sdr(block):
+                meta = parse_sdr(block)
+            else:
+                continue
+            hpt = extract_hp_hpt(block)
+            if hpt: meta.update(hpt)
+            results.append({"file": path, "file_offset": off, "spd_size": SPD128, "raw": block, **meta})
 
     return results
+
 
 def walk_paths(root: str, recursive: bool):
     if os.path.isfile(root):
@@ -505,7 +645,7 @@ def write_index_html(out_dir: str, rows: List[dict], html_path: str):
                             .replace(/\btc[kx]\b/gi, m => m.toUpperCase())
                             .replace(/\bns\b/gi, "ns")
                             .replace(/\bcl\b/gi, "CL")
-                            .replace(/\bx(\d+)\b/gi, "x$1")
+                            .replace(/\\bx(\\d+)\\b/gi, "x$1")
                             .replace(/\bpc[2345]-?/i, m => m.toUpperCase());
                 }
 
@@ -646,24 +786,41 @@ def write_index_html(out_dir: str, rows: List[dict], html_path: str):
             vendor = html.escape(r.get("vendor","") or "")
             pn = html.escape(r.get("part_number","") or "")
             serial = f"0x{(r.get('serial_u32') or 0):08X}"
-            hpt = r.get("hpt_hex") or ""
+            hpt = html.escape(r.get("hpt_hex") or "")
             crc_status = r.get("crc_status","")
-            # Prefer DDR4 base CRCs if present; otherwise DDR3 single CRC
+
+            # Prefer DDR4 base CRCs; else DDR3/legacy single CRC8
             stored_crc = r.get("stored_crc_base")
             computed_crc = r.get("computed_crc_base")
             if stored_crc is None and computed_crc is None:
                 stored_crc = r.get("stored_crc")
                 computed_crc = r.get("computed_crc")
-            sc = f"0x{stored_crc:04X}" if isinstance(stored_crc, int) else ""
-            cc = f"0x{computed_crc:04X}" if isinstance(computed_crc, int) else ""
+
+            def fmt_crc(v: object) -> str:
+                if not isinstance(v, int):
+                    return ""
+                # Heuristic: legacy is 0..255 -> 2 digits; otherwise 4 digits
+                return f"0x{v:02X}" if 0 <= v < 0x100 else f"0x{v:04X}"
+
+            sc = fmt_crc(stored_crc)
+            cc = fmt_crc(computed_crc)
+
+            # Optional: also display extension CRCs if present (SDR/DDR)
+            sc_ext = fmt_crc(r.get("stored_crc_ext"))
+            cc_ext = fmt_crc(r.get("computed_crc_ext"))
+            ext_cell = ""
+            if sc_ext or cc_ext:
+                ext_cell = f"<div>ext: <code>{sc_ext}</code> → <code>{cc_ext}</code></div>"
+
             rel = os.path.relpath(r.get("dest_path",""), os.path.dirname(html_path)).replace(os.sep, "/")
+            link = html.escape(rel)
+
             json_rel = ""
             jp = r.get("json_path")
             if jp:
                 json_rel = os.path.relpath(jp, os.path.dirname(html_path)).replace(os.sep, "/")
-            link = html.escape(rel)
-            meta_text = f"{r.get('mem_type','')} · {pn} · {serial}"  # whatever you like
 
+            meta_text = f"{r.get('mem_type','')} · {pn} · {serial}"
             view_btn = (f"<button class='viewbtn' data-json='{html.escape(json_rel)}' "
                         f"data-meta='{html.escape(meta_text)}'>View</button>"
                         if json_rel else "")
@@ -673,15 +830,16 @@ def write_index_html(out_dir: str, rows: List[dict], html_path: str):
                     f"<td>{vendor}</td>"
                     f"<td>{pn}</td>"
                     f"<td><code>{serial}</code></td>"
-                    f"<td><code>{html.escape(hpt)}</code></td>"
+                    f"<td><code>{hpt}</code></td>"
                     f"<td>{html.escape(crc_status)}</td>"
                     f"<td><code>{sc}</code></td>"
-                    f"<td><code>{cc}</code></td>"
+                    f"<td><code>{cc}</code>{ext_cell}</td>"
                     f"<td><a href='{link}'>{link}</a></td>"
                     f"<td>{view_btn}</td>"
                     "</tr>")
-
+            
         f.write("</table></body></html>")
+
 
 # ---------------------- Main flow -------------------------
 def main():

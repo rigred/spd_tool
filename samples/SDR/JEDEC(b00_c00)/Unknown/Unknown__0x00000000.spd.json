@@ -1,0 +1,137 @@
+{
+  "general": {
+    "bytes_present": 128,
+    "eeprom_log2_size": 8,
+    "memory_type": 4,
+    "interface_voltage": "LVTTL (3.3V tolerant)",
+    "spd_revision": "1.2"
+  },
+  "addressing": {
+    "module_data_width_bits": 64,
+    "banks_on_module": 2,
+    "bank1_row_bits": 12,
+    "bank1_col_bits": 9,
+    "bank2_row_bits": 12,
+    "bank2_col_bits": 9,
+    "banks_per_device": 4
+  },
+  "timings_ns": {
+    "tCK_highestCL_ns": 7.5,
+    "tAC_highestCL_ns": 5.4,
+    "tCK_mediumCL_ns": 0.0,
+    "tAC_mediumCL_ns": 0.0,
+    "tCK_shortCL_ns": 0.0,
+    "tAC_shortCL_ns": 0.0,
+    "tRP_min_ns": 20.0,
+    "tRRD_min_ns": 15.0,
+    "tRCD_min_ns": 20.0,
+    "tRAS_min_ns": 45.0
+  },
+  "derived": {
+    "profiles": [
+      {
+        "label": "highest",
+        "tCK_ns": 7.5,
+        "tAC_ns": 5.4,
+        "freq_MHz": 133.3,
+        "data_rate_MTps": 133,
+        "pc_rating": "PC133",
+        "CL": 3,
+        "tRCD": 3,
+        "tRP": 3,
+        "tRAS": 6,
+        "tRRD": 2
+      },
+      {
+        "label": "extrapolated_PC100",
+        "tCK_ns": 10.0,
+        "tAC_ns": 5.4,
+        "freq_MHz": 100.0,
+        "data_rate_MTps": 100,
+        "pc_rating": "PC100",
+        "CL": 3,
+        "tRCD": 2,
+        "tRP": 2,
+        "tRAS": 4,
+        "tRRD": 2
+      },
+      {
+        "label": "extrapolated_PC66",
+        "tCK_ns": 15.0,
+        "tAC_ns": 5.4,
+        "freq_MHz": 66.7,
+        "data_rate_MTps": 67,
+        "pc_rating": "PC66",
+        "CL": 3,
+        "tRCD": 1,
+        "tRP": 1,
+        "tRAS": 3,
+        "tRRD": 1
+      }
+    ]
+  },
+  "capabilities": {
+    "dimm_config": {
+      "ecc_mode": "non-ECC"
+    },
+    "refresh_rate": "64 kHz",
+    "burst_lengths_supported": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "cas_latencies": [
+      3
+    ],
+    "cs_latencies": [
+      0
+    ],
+    "we_latencies": [
+      0
+    ],
+    "module_features": {
+      "buffered_addr": false,
+      "registered_addr": false,
+      "on_card_PLL": false,
+      "buffered_data": false,
+      "registered_data": false,
+      "diff_clock": false
+    },
+    "chip_features": {
+      "early_RAS_precharge": true,
+      "auto_precharge": true,
+      "precharge_all": true,
+      "write_read_burst": true,
+      "Vcc_lower_tol": false,
+      "Vcc_upper_tol": false
+    },
+    "module_density_bitmap": [
+      "64 MiB"
+    ],
+    "addr_cmd_setup_ns": 1.5,
+    "addr_cmd_hold_ns": 0.8,
+    "din_setup_ns": 1.5,
+    "din_hold_ns": 0.8
+  },
+  "manufacturing": {
+    "jedec_ids_readable": "",
+    "location_code": 0,
+    "part_number": "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+    "rev_lo": 0,
+    "rev_hi": 0,
+    "manufacture_date": "2000-W00",
+    "serial_number_hex": "00000000"
+  },
+  "intel_info": {
+    "intel_freq_support_byte126": 100,
+    "intel_feature_bitmap_byte127": 253
+  },
+  "crc_info": {
+    "type": "checksum8(sum0..62)",
+    "stored": 166,
+    "computed": 166,
+    "status": "ok",
+    "coverage": "0..62"
+  }
+}

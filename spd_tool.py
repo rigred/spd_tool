@@ -81,7 +81,7 @@ def cmd_patch(args: argparse.Namespace):
 
 def main():
     """Builds and executes the command-line interface."""
-    parser = argparse.ArgumentParser(description="Modular SPD Tool for DDR RAM.")
+    parser = argparse.ArgumentParser(description="Modular SPD Tool (SDR + DDR families).")
     subparsers = parser.add_subparsers(dest="cmd", required=True)
 
     # Dump command
