@@ -6,15 +6,15 @@
 # Now catalogs SPDs regardless of checksum validity and records stored vs computed CRC(s).
 
 import argparse, os, sys, shutil, json, sqlite3, hashlib, time, html, re
+from typing import List, Optional, Tuple
 from collections import defaultdict
 from datetime import datetime, UTC
-from typing import List, Optional, Tuple
 import shlex, subprocess, tempfile
 
 # --- New Import from hp_smartmemory_ident ---
 # Assuming hp_smartmemory_ident.py is in the same directory or on the python path
 try:
-    from hp_smartmemory_ident import load_registry, u32, inv_mod_2p32, digits_to_u32_pn
+    from hp_smartmemory_ident import load_registry, digits_to_u32_pn, inv_mod_2p32, u32
 except ImportError:
     sys.stderr.write("[WARN] hp_smartmemory_ident.py not found. HPT validation will be disabled.\n")
     load_registry = u32 = inv_mod_2p32 = digits_to_u32_pn = None
@@ -31,6 +31,55 @@ def _is_valid_json_file(path: str) -> bool:
         return True
     except Exception:
         return False
+    
+def _norm_pn(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"\s+", " ", s)
+    return s.replace(" ", "").replace("-", "").upper()
+
+def _build_reverse_map(reg: dict) -> dict:
+    rev = {}
+    for hp_key, fam in reg.items():
+        for eq in fam.get("equivalents", []) or []:
+            rev[_norm_pn(eq)] = (hp_key, fam)
+    return rev
+
+def _resolve_hp_family(
+    vendor_pn: str,
+    serial_u32: int,
+    hpt_u32: Optional[int],
+    reg: dict,
+    rev: dict
+) -> Tuple[Optional[str], Optional[dict]]:
+    """
+    Returns (hp_key, fam) or (None, None)
+    Strategy:
+      1) Vendor-PN equivalent lookup (fast path)
+      2) If (serial,hpt) present, verify A*serial + B*hpt == K (mod 2^32)
+    """
+    key = _norm_pn(vendor_pn or "")
+    if key in rev:
+        return rev[key]
+    if hpt_u32 is not None and serial_u32:
+        for hp_key, fam in reg.items():
+            try:
+                A = int(fam["A"], 16); B = int(fam["B"], 16); K = int(fam["K"], 16)
+            except Exception:
+                continue
+            if u32(A*serial_u32 + B*hpt_u32) == K:
+                return hp_key, fam
+    return None, None
+
+def _compute_hpt_from_family(serial_u32: int, fam: dict) -> Optional[int]:
+    """hpt = (K - A*serial) * B^{-1} mod 2^32 (only if B is odd)."""
+    try:
+        A = int(fam["A"], 16); B = int(fam["B"], 16); K = int(fam["K"], 16)
+        if (B & 1) == 0:
+            return None
+        invB = inv_mod_2p32(B)
+        return u32((u32(K) - u32(A*serial_u32)) * invB)
+    except Exception:
+        return None
 
 def ensure_spd_json(spd_tool: str, spd_path: str, json_path: str,
                     extra_args: str = "", verbose: bool = False) -> bool:
@@ -233,7 +282,7 @@ def parse_legacy_common(block: bytes, mem_type_label: str) -> dict:
 
     meta = {
         "mem_type": mem_type_label,
-        "serial_u32_le": serial,
+        "serial_u32": serial,
         "mfg_week": wk, "mfg_year": yr,
         "part_number_str": pn,
         "mfg_id_bank": bank, "mfg_id_code": code,
@@ -251,7 +300,7 @@ def parse_legacy_common(block: bytes, mem_type_label: str) -> dict:
 
 def parse_sdr(block: bytes) -> dict:
     bank, code = (block[64], block[65]) if len(block) > 65 else (0, 0)
-    pn = block[73:91].rstrip(b"\x00").decode("ascii", errors="replace") if len(block) >= 91 else ""
+    pn = block[73:91].rstrip(b"\x00").decode("ascii", errors="replace").rstrip('\x00').strip() if len(block) >= 91 else ""
     serial = int.from_bytes(block[95:99], "little", signed=False) if len(block) >= 99 else 0
 
     s_base = block[63]
@@ -268,7 +317,7 @@ def parse_sdr(block: bytes) -> dict:
 
     return {
         "mem_type": "SDR",
-        "serial_u32_le": serial,
+        "serial_u32": serial,
         "part_number_str": pn or "Unknown",
         "mfg_id_bank": bank, "mfg_id_code": code,
         "mfg_id_str": vendor_from_id(bank, code),
@@ -297,16 +346,16 @@ def ddr3_crc_pair(block: bytes) -> tuple[int|None, int|None, str]:
     return (stored, computed, status)
 
 def parse_ddr3(block: bytes) -> dict:
-    serial = int.from_bytes(block[122:126], 'little')
+    serial = int.from_bytes(block[122:126], 'big')
     wk, yr = block[120], 2000 + (block[121] & 0xFF)
     pn = ""
     if len(block) >= 146:
-        pn = block[128:146].rstrip(b"\x00").decode("ascii", errors="replace")
+        pn = block[128:146].rstrip(b"\x00").decode("ascii", errors="replace").rstrip('\x00').strip()
     bank, code = block[117], block[118]
     stored, computed, status = ddr3_crc_pair(block)
     return {
         "mem_type": "DDR3",
-        "serial_u32_le": serial,
+        "serial_u32": serial,
         "mfg_week": wk, "mfg_year": yr,
         "part_number_str": pn,
         "mfg_id_bank": bank, "mfg_id_code": code,
@@ -341,7 +390,7 @@ def parse_ddr4(block: bytes) -> dict:
     s_b, c_b, s_e, c_e, st = ddr4_crc_info(block)
     return {
         "mem_type": "DDR4",
-        "serial_u32_le": serial,
+        "serial_u32": serial,
         "part_number_str": pn,
         "mfg_id_bank": bank, "mfg_id_code": code,
         "mfg_id_str": vendor_from_id(bank, code),
@@ -362,7 +411,7 @@ def parse_ddr2(block: bytes) -> dict:
     serial = int.from_bytes(block[122:126], 'little')
     return {
         "mem_type": "DDR2",
-        "serial_u32_le": serial,
+        "serial_u32": serial,
         "part_number_str": pn,
         "mfg_id_bank": bank, "mfg_id_code": code,
         "mfg_id_str": vendor_from_id(bank, code),
@@ -927,13 +976,9 @@ def main():
     conn = db_connect(args.db)
     db_migrate(conn)
 
-    hp_registry = load_registry(args.hpt_registry) if load_registry else {}
+    hp_registry = load_registry(args.hpt_registry) or {}
+    hp_rev = _build_reverse_map(hp_registry)
     # Create a reverse map from vendor P/N to HP P/N info
-    hp_reverse_map = {}
-    if hp_registry:
-        for hp_pn_key, fam in hp_registry.items():
-            for eq_pn in fam.get("equivalents", []):
-                hp_reverse_map[eq_pn] = fam
 
 
     all_paths = list(walk_paths(args.path, args.recursive))
@@ -961,8 +1006,10 @@ def main():
 
             mem_type = m.get("mem_type")
             vendor = m.get("mfg_id_str")
-            pn = m.get("part_number_str") or "Unknown"
-            serial_u32 = m.get('serial_u32_le', 0)
+            pn_raw = m.get("part_number_str") or "Unknown"
+            pn = pn_raw.strip()
+            pn_key = _norm_pn(pn)
+            serial_u32 = m.get('serial_u32', 0)
             serial_hex = f"0x{serial_u32:08X}"
             hpt_u32 = m.get("hpt_code_u32")
             hpt_hex = m.get("hpt_code_hex","")
@@ -971,34 +1018,33 @@ def main():
             computed_hpt_u32 = None
             hpt_status = "n/a"
             hp_pn = ""
-            if hp_reverse_map and pn in hp_reverse_map:
-                fam = hp_reverse_map[pn]
-                hp_pn = fam.get("name")
-                if hp_pn:
-                    try:
-                        pn_u32 = digits_to_u32_pn(hp_pn)
-                        key = f"0x{pn_u32:08X}"
-                        fam = hp_registry.get(key)
-                        if fam and all(k in fam for k in ["A", "B", "K"]):
-                            A = int(fam["A"], 16)
-                            B = int(fam["B"], 16)
-                            K = int(fam["K"], 16)
-                            if (B & 1) != 0:
-                                invB = inv_mod_2p32(B)
-                                computed_hpt_u32 = u32((u32(K) - u32(A * serial_u32)) * invB)
 
-                                if hpt_u32:
-                                    if hpt_u32 == computed_hpt_u32:
-                                        hpt_status = "match"
-                                    else:
-                                        hpt_status = "mismatch"
-                                else:
-                                    hpt_status = "generated"
+            hp_key, fam = (None, None)
+            if hp_registry:
+                hp_key, fam = _resolve_hp_family(
+                    vendor_pn=pn,
+                    serial_u32=serial_u32,
+                    hpt_u32=hpt_u32,
+                    reg=hp_registry,
+                    rev=hp_rev
+                )
 
-                    except Exception as e:
-                        if args.verbose:
-                            sys.stderr.write(f"[WARN] HPT computation failed for {pn}: {e}\n")
-
+            if fam:
+                # Prefer canonical HP P/N string from the registry
+                hp_pn = fam.get("name", "") or ""
+                # Compute HPT from (serial, family) using the same math as hp_smartmemory_ident
+                computed_hpt_u32 = _compute_hpt_from_family(serial_u32, fam)
+                if computed_hpt_u32 is None:
+                    hpt_status = "family_B_even_or_error"
+                elif hpt_u32 is None:
+                    hpt_status = "generated"
+                else:
+                    hpt_status = "match" if computed_hpt_u32 == hpt_u32 else "mismatch"
+            else:
+                # No family match — if the visible PN is already an HP-style number,
+                # still classify the stored HPT using the shared validator.
+                if validate_hpt and pn and hpt_u32 is not None:
+                    hpt_status = validate_hpt(hp_registry, pn, serial_u32, hpt_u32)
 
             # Decide destination
             if move_original:
@@ -1048,7 +1094,7 @@ def main():
                 "vendor_bank": int(m.get("mfg_id_bank", 0)),
                 "vendor_code": int(m.get("mfg_id_code", 0)),
                 "part_number": pn,
-                "serial_u32": int(m.get("serial_u32_le", 0)),
+                "serial_u32": int(m.get("serial_u32", 0)),
                 "crc_status": m.get("crc_status", ""),
                 "stored_crc": stored_crc,
                 "computed_crc": computed_crc,
