@@ -236,7 +236,7 @@ class SDRDecoder:
                 "tCK_ns": round(tck_ns, 3),
                 "tAC_ns": round(tac_ns, 3),
                 "freq_MHz": round(mhz, 1),
-                "data_rate_MTps": int(round(mhz)),
+                "data_rate_MB/s": int(round(mhz*8)),
                 "pc_rating": pc,
                 "CL": final_cl,
                 "tRCD": _cycles(timings["tRCD_min_ns"], tck_ns),
@@ -395,6 +395,8 @@ class SDRDecoder:
             # And also use the CORRECT keys here (with the "_min_" suffix)
             f"{t.get('tRP_min_ns',0):.1f} / {t.get('tRRD_min_ns',0):.1f} / {t.get('tRCD_min_ns',0):.1f} / {t.get('tRAS_min_ns',0):.1f} ns",
             self.data[27:31])
+        
+        module_width = a.get('module_data_width_bits','?')
 
         # --- Derived Speeds & Timings (clocks) ---
         derv = data.get("derived", {})
@@ -406,7 +408,7 @@ class SDRDecoder:
                 mhz   = pr["freq_MHz"]
                 tck   = pr["tCK_ns"]
                 pc    = pr["pc_rating"]
-                mbps  = int(round(mhz * 8.0))
+                mbps  = int(round(mhz * module_width/8)) # multiply by bytes in bus width)
                 cl    = pr["CL"]
                 trcd  = pr["tRCD"]
                 trp   = pr["tRP"]
