@@ -288,7 +288,7 @@ def ddr3_crc_pair(block: bytes) -> tuple[int|None, int|None, str]:
     return (stored, computed, status)
 
 def parse_ddr3(block: bytes) -> dict:
-    serial = (block[122] | (block[123] << 8) | (block[124] << 16) | (block[125] << 24)) & 0xFFFFFFFF
+    serial = int.from_bytes(block[122:126], 'big')
     wk, yr = block[120], 2000 + (block[121] & 0xFF)
     pn = ""
     if len(block) >= 146:
@@ -328,7 +328,7 @@ def ddr4_crc_info(block: bytes) -> tuple[int|None,int|None,int|None,int|None,str
 def parse_ddr4(block: bytes) -> dict:
     bank, code = block[320], block[321]
     pn = block[329:349].rstrip(b"\x00").decode("ascii", errors="replace")
-    serial = (block[325] | (block[326] << 8) | (block[327] << 16) | (block[328] << 24)) & 0xFFFFFFFF
+    serial = int.from_bytes(block[325:329], 'big')
     s_b, c_b, s_e, c_e, st = ddr4_crc_info(block)
     return {
         "mem_type": "DDR4",
@@ -366,8 +366,8 @@ def extract_hp_hpt(block: bytes):
     idx = block.find(tag)
     if idx < 0 or idx + 8 > len(block):
         return None
-    h0, h1, h2, h3 = block[idx+4:idx+8]
-    hpt = (h0 | (h1 << 8) | (h2 << 16) | (h3 << 24)) & 0xFFFFFFFF
+    hpt_bytes = block[idx+4:idx+8]
+    hpt = int.from_bytes(hpt_bytes, 'big')
     return {"hpt_tag_offset_in_spd": idx, "hpt_code_u32_le": hpt, "hpt_code_hex": f"0x{hpt:08X}"}
 
 # ---------------------- Scanning logic ---------------------
