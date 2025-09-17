@@ -362,13 +362,29 @@ def parse_ddr2(block: bytes) -> dict:
 
 # ---------------------- HP HPT tag -------------------------
 def extract_hp_hpt(block: bytes):
-    tag = b"HPT\x00"
-    idx = block.find(tag)
+    """
+    Finds the 'HPT' prefix and extracts the 4-byte code that follows
+    the 4-byte tag area (e.g., 'HPT ' or 'HPT\x00').
+    """
+    # Use the constant 3-byte prefix as an anchor
+    tag_prefix = b"HPT"
+    idx = block.find(tag_prefix)
+
+    # Check if the prefix was found and if there are enough bytes for the
+    # full 8-byte structure (3-byte prefix + 1-byte variable + 4-byte code)
     if idx < 0 or idx + 8 > len(block):
         return None
-    hpt_bytes = block[idx+4:idx+8]
+
+    # The 4-byte code starts *after* the full 4-byte tag area.
+    # So, we read from an offset of +4 from the start of the prefix.
+    hpt_bytes = block[idx + 4 : idx + 8]
     hpt = int.from_bytes(hpt_bytes, 'big')
-    return {"hpt_tag_offset_in_spd": idx, "hpt_code_u32_le": hpt, "hpt_code_hex": f"0x{hpt:08X}"}
+
+    return {
+        "hpt_tag_offset_in_spd": idx,
+        "hpt_code_u32": hpt,
+        "hpt_code_hex": f"0x{hpt:08X}"
+    }
 
 # ---------------------- Scanning logic ---------------------
 def scan_windows(data: bytes, size: int, step: int):
