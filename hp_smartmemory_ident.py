@@ -63,12 +63,19 @@ def cmd_identify(args):
 
     matches = []
     for key_p, fam in reg.items():
-        A = int(fam["A"], 16)
-        B = int(fam["B"], 16)
-        K = int(fam["K"], 16)
+        A_str = fam.get("A")
+        B_str = fam.get("B")
+        K_str = fam.get("K")
+        if not all([A_str, B_str, K_str]):
+            continue # Skip families without A, B, K constants
+
+        A = int(A_str, 16)
+        B = int(B_str, 16)
+        K = int(K_str, 16)
         if u32(A*serial + B*hpt) == K:
             pn_u32 = int(key_p, 16)
             matches.append((pn_u32, fam))
+
     if not matches:
         print("No match in registry. You need to learn this family (see 'learn').")
         return 1
@@ -76,7 +83,11 @@ def cmd_identify(args):
     for pn_u32, fam in matches:
         pn_str = fam.get("name") or format_hp_pn(pn_u32)
         print(f"Match: HP P/N {pn_str}  (P=0x{pn_u32:08X})")
+        if fam.get("equivalents"):
+            print(f"  Vendor equivalents: {', '.join(fam['equivalents'])}")
+
     return 0
+
 
 def cmd_learn(args):
     # Need two samples of the same (unknown) HP P/N + the actual PN once
@@ -143,6 +154,64 @@ def cmd_hpt(args):
     print(f"HPT   : 0x{hpt:08X} ({hpt})")
     return 0
 
+def cmd_lookup(args):
+    """Looks up an HP or vendor part number."""
+    reg = load_registry(args.registry)
+    
+    # Create a reverse map from vendor P/N to HP P/N info
+    reverse_map = {}
+    for hp_pn_key, fam in reg.items():
+        for eq_pn in fam.get("equivalents", []):
+            reverse_map[eq_pn] = fam
+
+    # Check if the input is an HP part number
+    try:
+        pn_u32 = digits_to_u32_pn(args.part_number)
+        key = f"0x{pn_u32:08X}"
+        if key in reg:
+            fam = reg[key]
+            print(f"HP P/N: {fam.get('name', args.part_number)}")
+            if fam.get("equivalents"):
+                print("Known vendor part numbers:")
+                for eq in fam["equivalents"]:
+                    print(f"- {eq}")
+            else:
+                print("No known vendor equivalents.")
+            return 0
+    except ValueError:
+        pass # Not a digit-based part number
+
+    # Check if the input is a vendor part number
+    if args.part_number in reverse_map:
+        fam = reverse_map[args.part_number]
+        print(f"Vendor P/N: {args.part_number}")
+        print(f"Maps to HP P/N: {fam.get('name')}")
+        return 0
+        
+    print(f"Part number '{args.part_number}' not found in registry.")
+    return 1
+
+def cmd_add_equivalent(args):
+    """Adds a vendor equivalent part number to an HP family."""
+    reg = load_registry(args.registry)
+    pn_u32 = digits_to_u32_pn(args.part_number)
+    key = f"0x{pn_u32:08X}"
+    
+    if key not in reg:
+        reg[key] = {"name": args.part_number, "equivalents": []}
+        
+    if "equivalents" not in reg[key]:
+        reg[key]["equivalents"] = []
+        
+    if args.equivalent_pn not in reg[key]["equivalents"]:
+        reg[key]["equivalents"].append(args.equivalent_pn)
+        save_registry(args.registry, reg)
+        print(f"Added '{args.equivalent_pn}' as an equivalent for HP P/N {args.part_number}.")
+    else:
+        print("Equivalent part number already exists.")
+        
+    return 0
+
 # ---------- Main ----------
 
 def main():
@@ -166,11 +235,20 @@ def main():
     p_learn.add_argument("--part-number", required=True, help="e.g. 712383-081")
     p_learn.set_defaults(func=cmd_learn)
 
-    # NEW: compute HPT from serial + PN
     p_hpt = sub.add_parser("hpt", help="Compute HPT from (serial, part-number) using registry.")
     p_hpt.add_argument("--serial", required=True, help="e.g. 0x4132E061 or 1094997473")
     p_hpt.add_argument("--part-number", required=True, help="e.g. 712383-081 or 712383081")
     p_hpt.set_defaults(func=cmd_hpt)
+
+    p_lookup = sub.add_parser("lookup", help="Look up an HP or vendor part number.")
+    p_lookup.add_argument("part_number", help="HP or vendor part number to look up.")
+    p_lookup.set_defaults(func=cmd_lookup)
+
+    p_add_equiv = sub.add_parser("add-equivalent", help="Add a vendor equivalent to an HP P/N.")
+    p_add_equiv.add_argument("--part-number", required=True, help="HP P/N, e.g. 647648-071")
+    p_add_equiv.add_argument("--equivalent-pn", required=True, help="Vendor P/N, e.g. M393B5270DH0-CK0")
+    p_add_equiv.set_defaults(func=cmd_add_equivalent)
+
 
     args = ap.parse_args()
     raise SystemExit(args.func(args))
