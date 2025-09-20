@@ -2,22 +2,28 @@
 # hp_smartmemory_ident.py
 # Identify HP SmartMemory P/N from (serial,hpt) using a registry of family constants.
 # Learn new families from two samples + known PN.
-# NEW: compute HPT from (serial, part-number).
+# NEW: compute HPT from (serial, part-number), now with support for even B coefficients.
 
-import json, argparse, os
+import json, argparse, os, sys
 
 MOD = 1 << 32
 u32 = lambda x: x & 0xFFFFFFFF
 
 REG_PATH_DEFAULT = "hp_families.json"
 
-def inv_mod_2p32(a: int) -> int:
-    # Multiplicative inverse exists iff a is odd
-    a &= 0xFFFFFFFF
-    # 2-adic Newton iteration, 5 rounds are enough for 32-bit
-    x = a  # initial guess
-    for _ in range(5):
-        x = (x * (2 - a * x)) & 0xFFFFFFFF
+def inv_mod_pow2(a: int, k: int) -> int:
+    """
+    Computes modular inverse of a for modulus 2^k, where a is odd.
+    """
+    if k == 0:
+        return 0
+    m = 1 << k
+    x = a
+    # Number of iterations for 2-adic Newton-Raphson method is ceil(log2(k)).
+    # 5 is enough for k<=32, 6 is enough for k<=64.
+    num_iterations = 5 if k <= 32 else 6
+    for _ in range(num_iterations):
+        x = (x * (2 - a * x)) & (m - 1)
     return x
 
 def load_registry(path: str):
@@ -52,6 +58,15 @@ def learn_family_from_two(s1, h1, s2, h2):
     A  = dH
     B  = u32(-dS)
     K  = u32(A*s1 + B*h1)
+    
+    # Verification check
+    K2 = u32(A*s2 + B*h2)
+    if K != K2:
+        sys.stderr.write(
+            f"[WARN] Inconsistent data: K derived from sample 1 (0x{K:08X}) does not match K from sample 2 (0x{K2:08X}).\n"
+            "       The learned family constants may be incorrect for this memory.\n"
+        )
+        
     return A, B, K
 
 # ---------- Commands ----------
@@ -99,9 +114,13 @@ def cmd_learn(args):
 
     A, B, K = learn_family_from_two(s1, h1, s2, h2)
 
+    invB_str = ""
     if (B & 1) == 0:
-        print("Warning: derived B is even; choose two different samples from the same P/N.")
-    invB = inv_mod_2p32(B)  # sanity; will be wrong if B even
+        print("Warning: derived B is even. The 'hpt' command will show multiple possible solutions.")
+    else:
+        invB = inv_mod_pow2(B, 32)
+        invB_str = f"  (inv=0x{invB:08X})"
+
 
     # Store
     reg = load_registry(args.registry)
@@ -117,7 +136,7 @@ def cmd_learn(args):
     print("Learned family constants:")
     print(f"  PN       : {args.part_number} (P=0x{pn_u32:08X})")
     print(f"  A        : 0x{A:08X}")
-    print(f"  B        : 0x{B:08X}  (inv=0x{invB:08X})")
+    print(f"  B        : 0x{B:08X}{invB_str}")
     print(f"  K (magic): 0x{K:08X}")
     print(f"Saved to   : {args.registry}")
     return 0
@@ -125,7 +144,7 @@ def cmd_learn(args):
 def cmd_hpt(args):
     """
     Compute HPT from (serial, part-number) using the registry family constants.
-    Uses: hpt ≡ (K - A*serial) * B^{-1} (mod 2^32)
+    Solves B*hpt = K - A*serial (mod 2^32) for hpt.
     """
     reg = load_registry(args.registry)
     serial = parse_int(args.serial) & 0xFFFFFFFF
@@ -141,17 +160,42 @@ def cmd_hpt(args):
     A = int(fam["A"], 16)
     B = int(fam["B"], 16)
     K = int(fam["K"], 16)
-
-    if (B & 1) == 0:
-        print("Error: B is even; no modular inverse modulo 2^32. Registry entry may be wrong.")
-        return 2
-
-    invB = inv_mod_2p32(B)
-    hpt = u32((u32(K) - u32(A * serial)) * invB)
+    
+    val = u32(K - u32(A * serial))
 
     print(f"HP P/N : {fam.get('name') or format_hp_pn(pn_u32)} (P=0x{pn_u32:08X})")
     print(f"Serial: 0x{serial:08X} ({serial})")
-    print(f"HPT   : 0x{hpt:08X} ({hpt})")
+
+    if (B & 1) != 0: # B is odd, standard modular inverse
+        invB = inv_mod_pow2(B, 32)
+        hpt = u32(val * invB)
+        print(f"HPT   : 0x{hpt:08X} ({hpt})")
+    else: # B is even, solve linear congruence
+        g = B & -B # gcd(B, 2**32) is the largest power of 2 that divides B
+        if g == 0:
+            print("Error: B is zero in registry, cannot compute HPT.", file=sys.stderr)
+            return 2
+        
+        if val % g != 0:
+            print(f"Error: (K - A*serial) is not divisible by gcd(B, 2^32), no solution for HPT.", file=sys.stderr)
+            return 2
+        
+        # We have g solutions. We'll find the smallest positive one and then the others.
+        B_prime = B // g
+        val_prime = val // g
+        k = g.bit_length() - 1
+        mod_k = 32 - k
+        
+        inv_B_prime = inv_mod_pow2(B_prime, mod_k)
+        hpt0 = (val_prime * inv_B_prime) & ((1 << mod_k) - 1)
+        
+        print(f"Found {g} possible HPT solutions:")
+        
+        step = (1 << 32) // g
+        for i in range(g):
+            hpt_i = u32(hpt0 + i * step)
+            print(f"  - 0x{hpt_i:08X} ({hpt_i})")
+
     return 0
 
 def cmd_lookup(args):
