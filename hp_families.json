@@ -9,12 +9,16 @@
     "A": "0x8BD11FB9",
     "B": "0x0D3E2A14",
     "K": "0x6BC318C7",
+    "equivalents": [
+      "M393B5270DH0-CK0",
+      "HMT351R7CFR4C-PB"
+    ],
     "name": "647648-071"
   },
   "0x2A761A69": {
-    "A": "0x3A1F2A6E",
-    "B": "0xFFFFF147",
-    "K": "0xFC27938C",
+    "A": "0xC5E0D592",
+    "B": "0x00000EB9",
+    "K": "0x03D86C74",
     "equivalents": [
       "M393B2G70EB0-CMA"
     ],

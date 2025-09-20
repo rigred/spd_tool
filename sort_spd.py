@@ -14,10 +14,14 @@ import shlex, subprocess, tempfile
 # --- New Import from hp_smartmemory_ident ---
 # Assuming hp_smartmemory_ident.py is in the same directory or on the python path
 try:
-    from hp_smartmemory_ident import load_registry, digits_to_u32_pn, inv_mod_2p32, u32
+    from hp_smartmemory_ident import load_registry, digits_to_u32_pn, compute_hpt_solutions, u32
 except ImportError:
     sys.stderr.write("[WARN] hp_smartmemory_ident.py not found. HPT validation will be disabled.\n")
-    load_registry = u32 = inv_mod_2p32 = digits_to_u32_pn = None
+    # Define dummy functions to prevent crashes when the import fails
+    def load_registry(path: str) -> dict: return {}
+    def digits_to_u32_pn(pn: str) -> int: return 0
+    def compute_hpt_solutions(serial: int, fam: dict) -> list[int]: return []
+    def u32(x: int) -> int: return x & 0xFFFFFFFF
 
 
 def json_sibling_path(spd_path: str) -> str:
@@ -55,31 +59,17 @@ def _resolve_hp_family(
     Returns (hp_key, fam) or (None, None)
     Strategy:
       1) Vendor-PN equivalent lookup (fast path)
-      2) If (serial,hpt) present, verify A*serial + B*hpt == K (mod 2^32)
+      2) If (serial,hpt) present, check against all known families
     """
     key = _norm_pn(vendor_pn or "")
     if key in rev:
         return rev[key]
     if hpt_u32 is not None and serial_u32:
         for hp_key, fam in reg.items():
-            try:
-                A = int(fam["A"], 16); B = int(fam["B"], 16); K = int(fam["K"], 16)
-            except Exception:
-                continue
-            if u32(A*serial_u32 + B*hpt_u32) == K:
+            solutions = compute_hpt_solutions(serial_u32, fam)
+            if hpt_u32 in solutions:
                 return hp_key, fam
     return None, None
-
-def _compute_hpt_from_family(serial_u32: int, fam: dict) -> Optional[int]:
-    """hpt = (K - A*serial) * B^{-1} mod 2^32 (only if B is odd)."""
-    try:
-        A = int(fam["A"], 16); B = int(fam["B"], 16); K = int(fam["K"], 16)
-        if (B & 1) == 0:
-            return None
-        invB = inv_mod_2p32(B)
-        return u32((u32(K) - u32(A*serial_u32)) * invB)
-    except Exception:
-        return None
 
 def ensure_spd_json(spd_tool: str, spd_path: str, json_path: str,
                     extra_args: str = "", verbose: bool = False) -> bool:
@@ -104,7 +94,13 @@ def ensure_spd_json(spd_tool: str, spd_path: str, json_path: str,
         if verbose:
             sys.stderr.write(f"[SPD-TOOL] {' '.join(cmd)}\n")
 
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+        # Use startupinfo on Windows to hide the console window for the subprocess
+        startupinfo = None
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, startupinfo=startupinfo)
         txt = out.decode(errors="ignore").strip()
 
         # Try to parse as JSON; if there is any log noise, strip to JSON region.
@@ -139,7 +135,7 @@ def ensure_spd_json(spd_tool: str, spd_path: str, json_path: str,
         if verbose:
             sys.stderr.write(f"[SPD-TOOL-FILE] {' '.join(cmd)}\n")
 
-        res = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        res = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, startupinfo=startupinfo)
         if verbose and res.stdout:
             sys.stderr.write(res.stdout.decode(errors="ignore"))
 
@@ -438,33 +434,6 @@ def extract_hp_hpt(block: bytes):
         "hpt_code_u32": hpt,
         "hpt_code_hex": f"0x{hpt:08X}"
     }
-
-# --- New function for HPT validation ---
-def validate_hpt(registry: dict, part_number: str, serial: int, hpt: int) -> str:
-    """Validates an HPT code against the registry, returns a status string."""
-    if not all([registry, part_number, hpt, u32, digits_to_u32_pn]):
-        return "n/a"
-    if not hpt:
-        return "n/a"
-
-    try:
-        pn_u32 = digits_to_u32_pn(part_number)
-        key = f"0x{pn_u32:08X}"
-        fam = registry.get(key)
-        if not fam:
-            return "unknown_pn"
-
-        A = int(fam["A"], 16)
-        B = int(fam["B"], 16)
-        K = int(fam["K"], 16)
-        
-        if u32(A * serial + B * hpt) == K:
-            return "valid"
-        else:
-            return "invalid"
-    except Exception:
-        return "error"
-
 
 # ---------------------- Scanning logic ---------------------
 def scan_windows(data: bytes, size: int, step: int):
@@ -1015,9 +984,9 @@ def main():
             hpt_hex = m.get("hpt_code_hex","")
 
             # --- HPT Validation and Computation ---
-            computed_hpt_u32 = None
             hpt_status = "n/a"
             hp_pn = ""
+            computed_hpt_u32 = None
 
             hp_key, fam = (None, None)
             if hp_registry:
@@ -1030,22 +999,22 @@ def main():
                 )
 
             if fam:
-                # Prefer canonical HP P/N string from the registry
                 hp_pn = fam.get("name", "") or ""
-                # Compute HPT from (serial, family) using the same math as hp_smartmemory_ident
-                computed_hpt_u32 = _compute_hpt_from_family(serial_u32, fam)
-                if computed_hpt_u32 is None:
-                    hpt_status = "family_B_even_or_error"
-                elif hpt_u32 is None:
-                    hpt_status = "generated"
+                solutions = compute_hpt_solutions(serial_u32, fam)
+                
+                if not solutions:
+                    hpt_status = "inconsistent_data"
+                elif hpt_u32 is not None:
+                    # An HPT is present on the DIMM, check if it's one of the valid solutions
+                    hpt_status = "valid" if hpt_u32 in solutions else "invalid"
                 else:
-                    hpt_status = "match" if computed_hpt_u32 == hpt_u32 else "mismatch"
-            else:
-                # No family match — if the visible PN is already an HP-style number,
-                # still classify the stored HPT using the shared validator.
-                if validate_hpt and pn and hpt_u32 is not None:
-                    hpt_status = validate_hpt(hp_registry, pn, serial_u32, hpt_u32)
+                    # No HPT on DIMM, but we could generate one
+                    hpt_status = "not_present"
 
+                # For the DB/HTML, only store a single computed HPT if the solution is unique
+                if len(solutions) == 1:
+                    computed_hpt_u32 = solutions[0]
+            
             # Decide destination
             if move_original:
                 src_ext = os.path.splitext(p)[1].lstrip(".") or "bin"

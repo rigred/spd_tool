@@ -69,6 +69,48 @@ def learn_family_from_two(s1, h1, s2, h2):
         
     return A, B, K
 
+def compute_hpt_solutions(serial: int, fam: dict) -> list[int]:
+    """
+    Computes all possible HPT solutions for a given serial and HP family.
+    Returns a list of solutions. Returns an empty list on error.
+    """
+    try:
+        A = int(fam["A"], 16)
+        B = int(fam["B"], 16)
+        K = int(fam["K"], 16)
+    except (KeyError, ValueError):
+        return [] # Family data is incomplete
+
+    solutions = []
+    val = u32(K - u32(A * serial))
+
+    if (B & 1) != 0:  # B is odd, standard modular inverse
+        invB = inv_mod_pow2(B, 32)
+        hpt = u32(val * invB)
+        solutions.append(hpt)
+    else:  # B is even, solve linear congruence
+        g = B & -B  # gcd(B, 2**32)
+        if g == 0:
+            return [] # B is zero, no unique solution
+
+        if val % g != 0:
+            return [] # No solution exists
+
+        B_prime = B // g
+        val_prime = val // g
+        k = g.bit_length() - 1
+        mod_k = 32 - k
+
+        inv_B_prime = inv_mod_pow2(B_prime, mod_k)
+        hpt0 = (val_prime * inv_B_prime) & ((1 << mod_k) - 1)
+
+        step = (1 << 32) // g
+        for i in range(g):
+            hpt_i = u32(hpt0 + i * step)
+            solutions.append(hpt_i)
+            
+    return solutions
+
 # ---------- Commands ----------
 
 def cmd_identify(args):
@@ -78,16 +120,11 @@ def cmd_identify(args):
 
     matches = []
     for key_p, fam in reg.items():
-        A_str = fam.get("A")
-        B_str = fam.get("B")
-        K_str = fam.get("K")
-        if not all([A_str, B_str, K_str]):
-            continue # Skip families without A, B, K constants
+        if not all(k in fam for k in ["A", "B", "K"]):
+            continue
 
-        A = int(A_str, 16)
-        B = int(B_str, 16)
-        K = int(K_str, 16)
-        if u32(A*serial + B*hpt) == K:
+        solutions = compute_hpt_solutions(serial, fam)
+        if hpt in solutions:
             pn_u32 = int(key_p, 16)
             matches.append((pn_u32, fam))
 
@@ -125,12 +162,22 @@ def cmd_learn(args):
     # Store
     reg = load_registry(args.registry)
     key = f"0x{pn_u32:08X}"
-    reg[key] = {
+    
+    # Check for an existing entry and preserve its equivalents
+    existing_entry = reg.get(key, {})
+    existing_equivalents = existing_entry.get("equivalents", [])
+
+    new_entry = {
         "name": args.part_number,
         "A": f"0x{A:08X}",
         "B": f"0x{B:08X}",
         "K": f"0x{K:08X}"
     }
+    
+    if existing_equivalents:
+        new_entry["equivalents"] = existing_equivalents
+
+    reg[key] = new_entry
     save_registry(args.registry, reg)
 
     print("Learned family constants:")
@@ -144,7 +191,6 @@ def cmd_learn(args):
 def cmd_hpt(args):
     """
     Compute HPT from (serial, part-number) using the registry family constants.
-    Solves B*hpt = K - A*serial (mod 2^32) for hpt.
     """
     reg = load_registry(args.registry)
     serial = parse_int(args.serial) & 0xFFFFFFFF
@@ -156,46 +202,22 @@ def cmd_hpt(args):
         print(f"No family constants for PN {args.part_number} (P=0x{pn_u32:08X}). "
               f"Learn it first with 'learn'.")
         return 1
-
-    A = int(fam["A"], 16)
-    B = int(fam["B"], 16)
-    K = int(fam["K"], 16)
     
-    val = u32(K - u32(A * serial))
+    solutions = compute_hpt_solutions(serial, fam)
 
     print(f"HP P/N : {fam.get('name') or format_hp_pn(pn_u32)} (P=0x{pn_u32:08X})")
     print(f"Serial: 0x{serial:08X} ({serial})")
 
-    if (B & 1) != 0: # B is odd, standard modular inverse
-        invB = inv_mod_pow2(B, 32)
-        hpt = u32(val * invB)
-        print(f"HPT   : 0x{hpt:08X} ({hpt})")
-    else: # B is even, solve linear congruence
-        g = B & -B # gcd(B, 2**32) is the largest power of 2 that divides B
-        if g == 0:
-            print("Error: B is zero in registry, cannot compute HPT.", file=sys.stderr)
-            return 2
-        
-        if val % g != 0:
-            print(f"Error: (K - A*serial) is not divisible by gcd(B, 2^32), no solution for HPT.", file=sys.stderr)
-            return 2
-        
-        # We have g solutions. We'll find the smallest positive one and then the others.
-        B_prime = B // g
-        val_prime = val // g
-        k = g.bit_length() - 1
-        mod_k = 32 - k
-        
-        inv_B_prime = inv_mod_pow2(B_prime, mod_k)
-        hpt0 = (val_prime * inv_B_prime) & ((1 << mod_k) - 1)
-        
-        print(f"Found {g} possible HPT solutions:")
-        
-        step = (1 << 32) // g
-        for i in range(g):
-            hpt_i = u32(hpt0 + i * step)
+    if not solutions:
+        print("Could not compute HPT. The family data may be invalid or inconsistent.")
+        return 1
+    elif len(solutions) == 1:
+        print(f"HPT   : 0x{solutions[0]:08X} ({solutions[0]})")
+    else:
+        print(f"Found {len(solutions)} possible HPT solutions:")
+        for hpt_i in solutions:
             print(f"  - 0x{hpt_i:08X} ({hpt_i})")
-
+    
     return 0
 
 def cmd_lookup(args):
