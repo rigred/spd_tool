@@ -9,12 +9,14 @@ from typing import Dict, Optional
 import math
 from ddr3_xmp_decoder import decode_xmp
 from spd_integrity import integrity_info, patch_image
+from spd_fields import decoded_fields, registered_warnings
 
 # --- Constants and Data Maps for DDR3 ---
 
 # Common module/DRAM vendors. Codes below are parity-stripped by the lookup;
 # unmapped vendors retain their bank/code instead of being guessed.
 JEP106_MAP = {
+    (0, 0x17): 'Texas Instruments', (4, 0x33): 'Inphi Corporation',
     (0, 0x04): 'Fujitsu', (0, 0x1C): 'Mitsubishi', (0, 0x2C): 'Micron Technology',
     (0, 0x2D): 'SK hynix', (0, 0x33): 'IDT', (0, 0x4E): 'Samsung',
     (0, 0x54): 'Hewlett-Packard (HP)', (1, 0x18): 'Kingston',
@@ -33,7 +35,7 @@ DDR3_FIELDS = [
     (18,18,  "tRCDmin"), (19,19,  "tRRDmin"), (20,20,  "tRPmin"),
     (21,21,  "Hi nibbles: tRC/tRAS"), (22,22,  "tRASmin LSB"), (23,23,  "tRCmin LSB"),
     (24,25,  "tRFCmin"), (26,26,  "tWTRmin"), (27,27,  "tRTPmin"), (28,29,  "tFAWmin"),
-    (30,33,  "SDRAM Features"), (34,38,  "FTB corrections"), (41,41, "Maximum Activate Count"), (60,76,  "Module specific"),
+    (30,33,  "SDRAM Features"), (34,38,  "FTB corrections"), (41,41, "Maximum Activate Count"), (60,116,  "Module specific"),
     (117,118,"Module Mfg ID"), (119,119,"Mfg Location"), (120,121,"Mfg Date"),
     (122,125,"Module Serial"), (126,127,"Base CRC"), (128,145,"Module Part Number"),
     (146,147,"Module Revision"), (148,149,"DRAM Mfg ID"), (150,175,"Mfg-specific"),
@@ -81,6 +83,8 @@ class DDR3Decoder:
         decoded["crc_info"] = self._detect_base_crc()
         decoded.update(self._find_gaps())
         warnings = []
+        if (self.data[3]&15)==11 and self.data[1]<0x10:
+            warnings.append('Pre-production LRDIMM revision: personality placement may differ; use the raw byte editor')
         if self.available_length < 256:
             warnings.append(f'Partial image: {self.available_length} bytes; missing optional data is unavailable')
             for key, stop in [('module_part_number',146), ('module_die_revision',147),
@@ -104,6 +108,8 @@ class DDR3Decoder:
             warnings.append('Density and address geometry disagree on capacity')
         if decoded['manufacturing']['manufacture_date'] == 'Unknown':
             warnings.append('Manufacturing date missing or invalid BCD')
+        warnings.extend(registered_warnings(self.raw_data))
+        decoded['module_specific_fields'] = decoded_fields(self.raw_data)
         decoded['warnings'] = warnings
         decoded['raw_fields'] = {name: self.raw_data[start:end+1].hex()
                                  for start, end, name in DDR3_FIELDS if start < self.available_length}
@@ -272,6 +278,13 @@ class DDR3Decoder:
         p((126,127), "Status", crc['status'])
         if not crc['coverage_match']:
              print("  [!] Note: CRC matches non-declared coverage and is not JEDEC-valid.")
+
+        if data.get('module_specific_fields'):
+            print("\n--- Module Register / Buffer Settings ---")
+            for key, setting in data['module_specific_fields'].items():
+                if programmer_mode or not setting['expert']:
+                    label=f"{setting['label']} ({key})"
+                    p(setting['offset'],label,setting['meaning'])
 
         for warning in data.get('warnings', []):
             print(f"  [!] {warning}")

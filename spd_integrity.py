@@ -42,9 +42,9 @@ def patch_image(target, source, args):
     if target[2] != source[2]:
         raise ValueError('Cannot patch between different memory generations')
     ddr3 = target[2] == 0x0B
-    if target[2] not in (0x08, 0x0B):
-        raise ValueError('Patching is supported for DDR2 and DDR3')
-    type_offset = 3 if ddr3 else 20
+    if target[2] not in (0x04, 0x07, 0x08, 0x0B):
+        raise ValueError('Patching requires SDR, DDR, DDR2 or DDR3')
+    type_offset = 3 if ddr3 else 20 if target[2] == 8 else 21
     if target[type_offset] != source[type_offset] and not getattr(args, 'force', False):
         raise ValueError('Module types differ; use --force after reviewing compatibility')
     ranges = []

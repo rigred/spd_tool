@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 from spd_library import SPD, load_spd_file, hexdiff
 from spd_integrity import repair_integrity
+from spd_fields import module_fields, field_by_key, edit_field
 
 
 class EditorDocument:
@@ -42,8 +43,8 @@ class EditorDocument:
 
     def set_part_number(self, value):
         offset = 128 if self.spd.mem_type == 0x0B else 73
-        if self.spd.mem_type not in (0x08, 0x0B):
-            raise ValueError('Structured edits require DDR2 or DDR3')
+        if self.spd.mem_type not in (0x04, 0x07, 0x08, 0x0B):
+            raise ValueError('Structured edits require SDR, DDR, DDR2 or DDR3')
         value = value.encode('ascii')
         if len(value) > 18 or any(b < 32 or b > 126 for b in value):
             raise ValueError('Part number must contain at most 18 printable ASCII characters')
@@ -51,12 +52,76 @@ class EditorDocument:
 
     def set_serial(self, value):
         offset = 122 if self.spd.mem_type == 0x0B else 95
-        if self.spd.mem_type not in (0x08, 0x0B):
-            raise ValueError('Structured edits require DDR2 or DDR3')
+        if self.spd.mem_type not in (0x04, 0x07, 0x08, 0x0B):
+            raise ValueError('Structured edits require SDR, DDR, DDR2 or DDR3')
         value = bytes.fromhex(value)
         if len(value) != 4:
             raise ValueError('Serial must contain exactly four hex bytes, in SPD byte order')
         self.edit(offset, value)
+
+    def set_module_field(self, key, value):
+        self.replace(edit_field(self.spd.data, key, value))
+
+    def copy_module_settings(self, source_data):
+        from types import SimpleNamespace
+        from spd_integrity import patch_image
+        source = SPD(source_data)
+        if self.spd.mem_type == 11:
+            if (self.spd.data[3] & 15) not in (1,5,9,11):
+                raise ValueError('Register/buffer settings require a DDR3 RDIMM or LRDIMM')
+            ranges = ['60:116']
+        elif self.spd.mem_type in (4,7):
+            ranges = ['21:22']
+        else:
+            raise ValueError('Module settings copy supports SDR, DDR and DDR3 registered layouts')
+        self.replace(patch_image(self.spd.data,source.data,SimpleNamespace(copy_range=ranges)))
+
+    def set_hpt(self, code):
+        if self.spd.mem_type != 11 or len(self.spd.data)<184:
+            raise ValueError('HPT editing requires DDR3 with bytes 176-183 present')
+        code = bytes.fromhex(code) if isinstance(code,str) else bytes(code)
+        if len(code)!=4:
+            raise ValueError('HPT code requires exactly four bytes in SPD byte order')
+        self.edit(176,b'HPT\0'+code)
+
+    def hp_info(self, registry=None):
+        from hp_smartmemory_ident import load_registry
+        registry = load_registry(str(Path(__file__).with_name('hp_families.json'))) if registry is None else registry
+        if self.spd.mem_type != 11 or len(self.spd.data)<184:
+            return dict(available=False, matches=[])
+        data=self.spd.data
+        serial=int.from_bytes(data[122:126],'big')
+        present=data[176:180]==b'HPT\0'
+        code=int.from_bytes(data[180:184],'big')
+        matches=[]
+        if present:
+            for key,family in registry.items():
+                try:
+                    a,b,k=(int(family[x],16) for x in ('A','B','K'))
+                    if (a*serial+b*code)&0xFFFFFFFF == k:
+                        matches.append(dict(key=key,name=family.get('name',key),equivalents=family.get('equivalents',[])))
+                except (KeyError,TypeError,ValueError):
+                    continue
+        return dict(available=True,present=present,serial=f'{serial:08X}',hpt=f'{code:08X}',matches=matches,
+                    note='Registry matches are learned relationships, not cryptographic authentication. Serial/part edits do not automatically rewrite HPT.')
+
+    def hpt_candidates(self, family_key, registry=None):
+        from hp_smartmemory_ident import load_registry, compute_hpt_solutions
+        registry=load_registry(str(Path(__file__).with_name('hp_families.json'))) if registry is None else registry
+        info=self.hp_info(registry)
+        if not info['available']:
+            raise ValueError('HPT editing requires a full DDR3 customer block')
+        if family_key not in registry:
+            raise ValueError('Unknown HP family')
+        family=registry[family_key]
+        try:
+            b=int(family['B'],16)
+        except (KeyError,ValueError) as exc:
+            raise ValueError('Family lacks valid coefficients') from exc
+        count=(b & -b) if b else 0
+        if not b or count>1024:
+            raise ValueError('Family is underdetermined; refusing to enumerate more than 1024 candidates')
+        return [f'{code:08X}' for code in compute_hpt_solutions(int(info['serial'],16),family)]
 
     def undo(self):
         if self.undo_stack:
@@ -136,6 +201,45 @@ class SPDEditor:
         for label, cb in [('Edit selected byte...', self.edit_selected), ('Write hex range...', self.edit_range),
                           ('Part number...', self.edit_part), ('Serial number...', self.edit_serial)]:
             ttk.Button(edits, text=label, command=lambda f=cb: self.run(f)).pack(side='left', padx=3)
+        module_tab = ttk.Frame(book)
+        book.add(module_tab, text='Registers / buffers')
+        filters = ttk.Frame(module_tab,padding=6)
+        filters.pack(fill='x')
+        self.field_group = tk.StringVar(value='All groups')
+        self.group_selector = ttk.Combobox(filters,textvariable=self.field_group,state='readonly',width=32)
+        self.group_selector.pack(side='left',padx=3)
+        self.group_selector.bind('<<ComboboxSelected>>',lambda event:self.refresh_module_fields())
+        self.field_search = tk.StringVar()
+        ttk.Label(filters,text='Filter:').pack(side='left',padx=3)
+        ttk.Entry(filters,textvariable=self.field_search,width=22).pack(side='left')
+        self.show_expert = tk.BooleanVar(value=False)
+        ttk.Checkbutton(filters,text='Show raw control/personality words',variable=self.show_expert,
+                        command=self.refresh_module_fields).pack(side='left',padx=6)
+        self.field_search.trace_add('write',lambda *args:self.refresh_module_fields())
+        self.module_view=ttk.Treeview(module_tab,columns=('group','name','value','raw','location'),show='headings',selectmode='browse')
+        for key,label,width in [('group','Group',210),('name','Setting',300),('value','Meaning',230),('raw','Code',65),('location','Byte / bits',105)]:
+            self.module_view.heading(key,text=label)
+            self.module_view.column(key,width=width)
+        module_scroll=ttk.Scrollbar(module_tab,orient='vertical',command=self.module_view.yview)
+        self.module_view.configure(yscrollcommand=module_scroll.set)
+        module_scroll.pack(side='right',fill='y')
+        self.module_view.pack(fill='both',expand=True)
+        self.module_view.bind('<Double-1>',lambda event:self.run(self.edit_module_field))
+        self.module_view.bind('<<TreeviewSelect>>',self.show_field_note)
+        self.field_note=tk.StringVar(value='Select a setting for its description. Raw personality words require the buffer vendor datasheet.')
+        ttk.Label(module_tab,textvariable=self.field_note,wraplength=1000,padding=6).pack(fill='x')
+        buttons=ttk.Frame(module_tab,padding=6)
+        buttons.pack(fill='x')
+        ttk.Button(buttons,text='Edit selected setting...',command=lambda:self.run(self.edit_module_field)).pack(side='left')
+        ttk.Button(buttons,text='Copy module settings from file...',command=lambda:self.run(self.copy_module_settings)).pack(side='left',padx=8)
+        hp_tab=ttk.Frame(book)
+        book.add(hp_tab,text='HP SmartMemory')
+        self.hp_text=ScrolledText(hp_tab,wrap='word',font='TkFixedFont')
+        self.hp_text.pack(fill='both',expand=True)
+        hp_buttons=ttk.Frame(hp_tab,padding=8)
+        hp_buttons.pack(fill='x')
+        ttk.Button(hp_buttons,text='Set HPT bytes...',command=lambda:self.run(self.edit_hpt)).pack(side='left')
+        ttk.Button(hp_buttons,text='Compute HPT from known family...',command=lambda:self.run(self.compute_hpt)).pack(side='left',padx=8)
         self.diff = ScrolledText(book, wrap='none', font='TkFixedFont')
         book.add(self.diff, text='Comparison')
         self.book = book
@@ -200,15 +304,130 @@ class SPDEditor:
         self.bytes_view.delete(*self.bytes_view.get_children())
         from ddr2_decoder import DDR2_FIELDS
         from ddr3_decoder import DDR3_FIELDS
-        fields = DDR2_FIELDS if spd.mem_type == 8 else DDR3_FIELDS if spd.mem_type == 11 else []
+        from legacy_decoder import LEGACY_FIELDS
+        fields = DDR2_FIELDS if spd.mem_type == 8 else DDR3_FIELDS if spd.mem_type == 11 else LEGACY_FIELDS
         for offset, value in enumerate(spd.data):
             field = next((name for start, end, name in fields if start <= offset <= end), 'Reserved / raw byte')
             changed = value != doc.saved[offset]
             self.bytes_view.insert('', 'end', iid=str(offset), values=(f'{offset:03d} / 0x{offset:02X}',
                                    f'{value:02X}', f'{doc.saved[offset]:02X}', field), tags=('changed',) if changed else ())
+        groups=['All groups']+sorted({f.group for f in module_fields(spd.data)})
+        self.group_selector.configure(values=groups)
+        if self.field_group.get() not in groups:self.field_group.set('All groups')
+        self.refresh_module_fields()
+        self.set_text(self.hp_text,json.dumps(doc.hp_info(),indent=2))
         if selected and self.bytes_view.exists(selected[0]):
             self.bytes_view.selection_set(selected[0])
             self.bytes_view.see(selected[0])
+
+    def refresh_module_fields(self):
+        if not self.document:return
+        self.module_view.delete(*self.module_view.get_children())
+        search=self.field_search.get().lower()
+        for f in module_fields(self.document.spd.data):
+            if f.expert and not self.show_expert.get():continue
+            if self.field_group.get() not in ('All groups',f.group):continue
+            if search and search not in f'{f.key} {f.group} {f.label}'.lower():continue
+            self.module_view.insert('','end',iid=f.key,values=(f.group,f.label,f.display(self.document.spd.data),
+                                    f'0x{f.raw(self.document.spd.data):X}',f'{f.offset} / {f.shift+f.bits-1}:{f.shift}'))
+        if not module_fields(self.document.spd.data):
+            self.field_note.set('No registered-module layout applies to this image. Use the byte editor for other fields.')
+
+    def show_field_note(self,event=None):
+        selected=self.module_view.selection()
+        if selected and self.document:
+            f=field_by_key(self.document.spd.data,selected[0])
+            self.field_note.set(f'{f.key}: {f.note or "Only the selected bitfield is changed; adjacent bits are preserved."}')
+
+    def edit_module_field(self):
+        import tkinter as tk
+        from tkinter import ttk
+        from fractions import Fraction
+        doc=self.require_document()
+        selected=self.module_view.selection()
+        if not selected:raise ValueError('Select a module setting to edit')
+        f=field_by_key(doc.spd.data,selected[0])
+        dialog=tk.Toplevel(self.root)
+        dialog.title(f.label)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        body=ttk.Frame(dialog,padding=16);body.pack(fill='both',expand=True)
+        ttk.Label(body,text=f'{f.label} - byte {f.offset}, bits {f.shift+f.bits-1}:{f.shift}').pack(anchor='w')
+        ttk.Label(body,text=f.note or 'Adjacent bits are preserved.',wraplength=540).pack(anchor='w',pady=8)
+        value=tk.StringVar()
+        if f.choices is not None:
+            options=[f'{code}: {meaning}' for code,meaning in f.choices.items()]
+            entry=ttk.Combobox(body,textvariable=value,values=options,state='readonly',width=56)
+            current=f.raw(doc.spd.data)
+            if current in f.choices:value.set(f'{current}: {f.choices[current]}')
+        else:
+            value.set(str(Fraction(f.raw(doc.spd.data))*Fraction(str(f.scale))))
+            entry=ttk.Entry(body,textvariable=value,width=36)
+            ttk.Label(body,text=f'Units: {f.unit or "encoded integer"}; step {f.scale}. Fractions are accepted; 0x-prefixed integers specify raw encoded counts.').pack(anchor='w')
+        entry.pack(fill='x',pady=8)
+        def apply():
+            raw=value.get().split(':',1)[0] if f.choices is not None else value.get()
+            doc.set_module_field(f.key,raw)
+            dialog.destroy()
+            self.refresh()
+        buttons=ttk.Frame(body);buttons.pack(fill='x',pady=8)
+        ttk.Button(buttons,text='Apply',command=lambda:self.run(apply)).pack(side='left')
+        ttk.Button(buttons,text='Cancel',command=dialog.destroy).pack(side='left',padx=8)
+        entry.focus_set()
+        dialog.bind('<Escape>',lambda event:dialog.destroy())
+
+    def copy_module_settings(self):
+        from tkinter import filedialog
+        doc=self.require_document()
+        path=filedialog.askopenfilename(parent=self.root,title='Select compatible donor SPD')
+        if path:
+            doc.copy_module_settings(load_spd_file(path).data)
+            self.refresh()
+
+    def edit_hpt(self):
+        from tkinter import simpledialog
+        doc=self.require_document()
+        info=doc.hp_info()
+        if not info['available']:raise ValueError('HPT editing requires DDR3 bytes 176-183')
+        code=simpledialog.askstring('HP HPT','Four HPT bytes in SPD byte order (big-endian registry integer):',
+                                    initialvalue=info['hpt'],parent=self.root)
+        if code is not None:
+            doc.set_hpt(code)
+            self.refresh()
+
+    def compute_hpt(self):
+        import tkinter as tk
+        from tkinter import ttk
+        from hp_smartmemory_ident import load_registry
+        doc=self.require_document()
+        if not doc.hp_info()['available']:raise ValueError('HPT computation requires DDR3 bytes 176-183')
+        registry=load_registry(str(Path(__file__).with_name('hp_families.json')))
+        families={f'{fam.get("name",key)} [{key}]':key for key,fam in registry.items() if all(x in fam for x in ('A','B','K'))}
+        if not families:raise ValueError('No learned HP families in hp_families.json')
+        dialog=tk.Toplevel(self.root);dialog.title('Compute HP HPT');dialog.transient(self.root);dialog.grab_set()
+        body=ttk.Frame(dialog,padding=16);body.pack()
+        ttk.Label(body,text='Select a learned family, then calculate candidates for the current serial.').pack()
+        choice=tk.StringVar(value=next(iter(families)))
+        ttk.Combobox(body,textvariable=choice,values=list(families),state='readonly',width=60).pack(fill='x',pady=8)
+        candidate=tk.StringVar()
+        picker=ttk.Combobox(body,textvariable=candidate,state='readonly',width=20);picker.pack(pady=8)
+        def calculate():
+            candidate.set('')
+            picker.configure(values=[])
+            values=doc.hpt_candidates(families[choice.get()],registry)
+            picker.configure(values=values)
+            if not values:raise ValueError('No HPT solution for this serial and family')
+            candidate.set(values[0])
+        def apply():
+            if candidate.get() not in doc.hpt_candidates(families[choice.get()],registry):raise ValueError('Calculate and select a candidate for the current family first')
+            doc.set_hpt(candidate.get());dialog.destroy();self.refresh()
+        # Changing families invalidates a previously computed candidate.
+        def clear_candidates(*args):
+            candidate.set('');picker.configure(values=[])
+        choice.trace_add('write',clear_candidates)
+        ttk.Button(body,text='Calculate candidates',command=lambda:self.run(calculate)).pack(pady=4)
+        ttk.Button(body,text='Apply selected HPT',command=lambda:self.run(apply)).pack(pady=4)
+        ttk.Button(body,text='Cancel',command=dialog.destroy).pack(pady=4)
 
     def edit_selected(self):
         from tkinter import simpledialog

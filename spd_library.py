@@ -7,6 +7,7 @@ import re
 from typing import Dict, List, Tuple, Optional
 
 from sdr_decoder import SDRDecoder
+from ddr_decoder import DDRDecoder
 from ddr2_decoder import DDR2Decoder
 from ddr3_decoder import DDR3Decoder
 
@@ -45,6 +46,8 @@ class SPD:
         """Select a decoder strictly by the memory-type byte."""
         if self.mem_type == MEM_SDR:
             return SDRDecoder(self.data)
+        if self.mem_type == MEM_DDR1:
+            return DDRDecoder(self.data)
         if self.mem_type == MEM_DDR2:
             return DDR2Decoder(self.data)
         if self.mem_type == MEM_DDR3:
@@ -59,8 +62,8 @@ class SPD:
         return self.decoded_data
 
     def patch(self, source_spd: 'SPD', args) -> bytes:
-        if self.mem_type not in (MEM_DDR2, MEM_DDR3):
-            raise ValueError('Patching is supported for DDR2 and DDR3')
+        if self.mem_type not in (MEM_SDR, MEM_DDR1, MEM_DDR2, MEM_DDR3):
+            raise ValueError('Patching requires SDR, DDR, DDR2 or DDR3')
         return self.decoder.patch(source_spd.data, args)
 
 def _try_load_text_hex(raw: bytes) -> Optional[bytes]:

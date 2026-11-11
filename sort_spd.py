@@ -223,109 +223,33 @@ def looks_like_sdr(block: bytes) -> bool:
 def looks_like_ddr1(block: bytes) -> bool:
     return looks_like_legacy_base(block) and block[2] == MEM_DDR1
 
-def legacy_crc_pair(block: bytes) -> tuple[int|None, int|None, int|None, int|None, str]:
-    """
-    Return (stored_base8, computed_base8, stored_ext8, computed_ext8, status)
-    status is:
-      - 'ok'     if base (and ext if present) match
-      - 'bad'    if base mismatches (or ext present and mismatches)
-      - 'weak'   if base matches but ext region absent (len<96)
-    """
-    if not looks_like_legacy_base(block):
-        return (None, None, None, None, "n/a")
+def legacy_crc_pair(block: bytes):
+    from spd_integrity import integrity_info
+    if not looks_like_legacy_base(block):return (None,None,None,None,'n/a')
+    info=integrity_info(block)
+    # Byte 95 is the first SERIAL byte, never an extension checksum.
+    return (info['stored'],info['computed'],None,None,'ok' if info['status']=='VALID' else 'bad')
 
-    stored_base = block[63]
-    computed_base = checksum8(block[0:63])  # bytes 0..62
-
-    stored_ext = computed_ext = None
-    status = "ok" if stored_base == computed_base else "bad"
-
-    # Optional extension (64..94 -> byte 95)
-    if len(block) >= 96:
-        stored_ext = block[95]
-        computed_ext = checksum8(block[64:95])  # bytes 64..94
-        if status == "ok":
-            status = "ok" if stored_ext == computed_ext else "bad"
-    else:
-        if status == "ok":
-            status = "weak"
-
-    return (stored_base, computed_base, stored_ext, computed_ext, status)
 
 def parse_legacy_common(block: bytes, mem_type_label: str) -> dict:
-    """
-    Heuristic field map used by many SDR/DDR1 modules:
-      - JEDEC Mfg ID (bank, code) at 64,65
-      - Part Number ASCII at 73..90 (18 bytes)
-      - Mfg week/year at 93,94
-      - Serial (LE) at 95..98
-    These are common but not universal; we treat as best-effort.
-    """
-    bank = block[64] if len(block) > 64 else 0
-    code = block[65] if len(block) > 65 else 0
-    pn = ""
-    if len(block) >= 91:
-        pn = block[73:91].rstrip(b"\x00").decode("ascii", errors="replace")
-    wk = block[93] if len(block) > 93 else 0
-    yr_raw = block[94] if len(block) > 94 else 0
-    # Year heuristic: many modules store YY with 2000+; fall back if tiny
-    yr = 2000 + yr_raw if yr_raw < 100 else int(yr_raw)
-    serial = 0
-    if len(block) >= 99:
-        serial = int.from_bytes(block[95:99], 'little')
+    from legacy_decoder import legacy_manufacturing
+    mfg=legacy_manufacturing(block)
+    stored,computed,_,_,status=legacy_crc_pair(block)
+    return dict(mem_type=mem_type_label,serial_u32=int.from_bytes(block[95:99],'big'),
+                part_number_str=mfg['module_part_number'] or 'Unknown',
+                mfg_id_bank=mfg['mfg_id_bank'],mfg_id_code=mfg['mfg_id_code'],mfg_id_str=mfg['module_mfg_id'],
+                mfg_year=mfg['manufacture_year_two_digit'],
+                mfg_week=(block[94]>>4)*10+(block[94]&15),
+                crc_status=status,stored_crc=stored,computed_crc=computed,
+                stored_crc_ext=None,computed_crc_ext=None)
 
-    sb, cb, se, ce, st = legacy_crc_pair(block)
-
-    meta = {
-        "mem_type": mem_type_label,
-        "serial_u32": serial,
-        "mfg_week": wk, "mfg_year": yr,
-        "part_number_str": pn,
-        "mfg_id_bank": bank, "mfg_id_code": code,
-        "mfg_id_str": vendor_from_id(bank, code),
-        "crc_status": st,
-        # Store 8-bit checksums in the DDR3 fields to reuse schema/HTML:
-        "stored_crc": sb,       # 8-bit base
-        "computed_crc": cb,     # 8-bit base
-        "stored_crc_base": None,    # unused for legacy
-        "computed_crc_base": None,  # unused for legacy
-        "stored_crc_ext": se,       # 8-bit ext (optional)
-        "computed_crc_ext": ce,     # 8-bit ext (optional)
-    }
-    return meta
 
 def parse_sdr(block: bytes) -> dict:
-    bank, code = (block[64], block[65]) if len(block) > 65 else (0, 0)
-    pn = block[73:91].rstrip(b"\x00").decode("ascii", errors="replace").rstrip('\x00').strip() if len(block) >= 91 else ""
-    serial = int.from_bytes(block[95:99], "little", signed=False) if len(block) >= 99 else 0
+    return parse_legacy_common(block,'SDR')
 
-    s_base = block[63]
-    c_base = checksum8(block[0:63])
-
-    ext_region = block[64:95]
-    has_ext_payload = any(b != 0x00 for b in ext_region)
-    s_ext = block[95] if len(block) > 95 else 0
-    c_ext = checksum8(ext_region) if has_ext_payload else None
-
-    base_ok = (s_base == c_base)
-    ext_ok  = True if not has_ext_payload else (s_ext == c_ext)
-    status  = "ok" if (base_ok and ext_ok) else "bad"
-
-    return {
-        "mem_type": "SDR",
-        "serial_u32": serial,
-        "part_number_str": pn or "Unknown",
-        "mfg_id_bank": bank, "mfg_id_code": code,
-        "mfg_id_str": vendor_from_id(bank, code),
-        "crc_status": status,
-        "stored_crc": s_base,
-        "computed_crc": c_base,
-        "stored_crc_ext": s_ext if has_ext_payload else None,
-        "computed_crc_ext": c_ext if has_ext_payload else None,
-    }
 
 def parse_ddr1(block: bytes) -> dict:
-    return parse_legacy_common(block, "DDR")
+    return parse_legacy_common(block,'DDR')
 
 
 # ---------------------- DDR3 parse & CRCs ------------------

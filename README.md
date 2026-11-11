@@ -1,107 +1,104 @@
 # SPD Tool
 
-Decode, compare, patch and edit **DDR2 and DDR3** SPD images with Python 3.9+
-(standard library only). The existing SDR decoder and Linux SMBus utilities
-are also included. DDR/DDR4/DDR5 decoding is not implemented by the core CLI;
-the catalog utility has separate legacy and DDR4 recognition.
+A Python toolkit for inspecting, comparing and editing SDR, DDR, DDR2 and
+DDR3 Serial Presence Detect images. Includes a Tk editor, DDR3 RDIMM/LRDIMM
+register fields, HP SmartMemory utilities, and Linux SMBus access.
 
-## Graphical editor
+## Support
 
-```sh
-python spd_tool.py gui
-python spd_tool.py gui --spd module.bin
-# Equivalent standalone entry point:
-python spd_editor.py module.bin
-```
+| Memory family | Decode and JSON export | Binary patching | Named module fields |
+| --- | --- | --- | --- |
+| SDR SDRAM | Yes | Yes | Geometry, timings, capabilities, register/buffer attributes |
+| DDR SDRAM (DDR1) | Yes | Yes | Geometry, timings, capabilities, register/buffer attributes |
+| DDR2 SDRAM | Yes | Yes | Raw byte editing |
+| DDR3 SDRAM | Yes | Yes | RDIMM and LRDIMM organization, mechanics, register/buffer settings |
 
-The Tk editor provides:
+DDR3 support includes JEDEC timings, XMP profiles, manufacturing data and HP
+HPT blocks. Reserved and vendor-specific bytes remain accessible in the byte
+editor. DDR4 catalog recognition and ee1004 reads are separate from the core
+decoder; DDR4/DDR5 editing, FBDIMM and Rambus formats are outside its scope.
 
-- Decoded organization, timings, manufacturing, integrity status and warnings.
-- Every available byte in an editable table with decimal/hex offsets, field
-  labels, saved values and highlighted changes. Double-click a row to edit.
-- Multi-byte hex-range writes and dedicated part-number and serial dialogs.
-- Undo/redo, file comparison, JSON export, Save and Save As.
-- Checksum/CRC repair on save (enabled by default), atomic file replacement,
-  and an unsaved-changes prompt when opening another image or closing.
+## Requirements
 
-Tk must be installed and a graphical display available. Some Linux Python
-installations need the distribution's `python3-tk` package. Windows/macOS
-Python installations commonly include Tk. The core CLI does not import Tk
-or the Linux-only SMBus driver unless that command is invoked.
+- Python 3.9 or later; no third-party Python packages required.
+- Tk and a graphical display for the editor. On Debian/Ubuntu, install
+  `python3-tk` if it is not included with Python.
+- Linux I2C device access for `spd_smbus.py`.
 
-Save writes a **binary SPD image**, including when the input was hex text.
-Use Save As to retain an original text dump. The editor operates on files;
-it does not write to a DIMM EEPROM.
+Run commands from the repository root. The examples use `python`; substitute
+`python3` where required by the local installation.
 
-## CLI
+## Quick start
 
 ```sh
-python spd_tool.py dump --spd module.bin
+git clone https://github.com/rigred/spd_tool.git
+cd spd_tool
+
+# Inspect an image, including offsets and raw fields.
 python spd_tool.py dump --spd module.bin --programmer
-python spd_tool.py dump --spd module.bin --json decoded.json
-python spd_tool.py dump --spd module.bin --json -
-python spd_tool.py diff --file-a original.bin --file-b edited.bin --show-maps
-python spd_tool.py patch --source donor.bin --target target.bin --out patched.bin --copy-partnum
-python spd_tool.py patch --source donor.bin --target target.bin --out patched.bin --copy-range 0x10:0x20
+
+# Open the editor.
+python spd_tool.py gui --spd module.bin
+
+# Export decoded data.
+python spd_tool.py dump --spd module.bin --json module.json
+
+# Compare images.
+python spd_tool.py diff --file-a original.bin --file-b modified.bin --show-maps
 ```
 
-Patch ranges are **inclusive**. Manufacturer, part-number and vendor copy
-options use the selected generation's offsets. DDR2 uses manufacturing
-bytes 64–98; DDR3 uses 117–149. Cross-generation copies and ranges beyond
-either image are rejected. A module-type mismatch requires `--force`.
-Patching repairs the destination's generation-specific integrity field,
-including when byte 0 changes DDR3 CRC coverage.
+The loader accepts binary images and hex-text dumps of 128-256 bytes. Image
+length is preserved. See [Image formats](docs/FORMATS.md) for text syntax,
+partial images and checksum coverage.
 
-HP HPT operations are DDR3-specific:
+## Editing
+
+The Tk editor provides decoded data, a byte table, named register/buffer
+fields, HP SmartMemory tools and image comparison. Double-click a byte or
+module setting to edit it. The register view supports group and text filters;
+**Show raw control/personality words** exposes expert fields. Edits support
+undo/redo. Save writes a binary image and repairs its checksum/CRC by default.
+
+Named fields are also available from the CLI:
 
 ```sh
-python spd_tool.py patch --source hp.bin --target target.bin --out patched.bin --copy-hpt --force
+# Inspect field keys, encodings and current values.
+python spd_tool.py fields --spd rdimm.bin --expert
+
+# Set CA drive strengths using the codes listed by fields.
+python spd_tool.py edit --spd rdimm.bin --out modified.bin \
+  --set ca_a=1 --set ca_b=2
+
+# Edit an LRDIMM termination setting and personality nibble.
+python spd_tool.py edit --spd lrdimm.bin --out modified.bin \
+  --set 1333_1600.rtt_nom=3 --set F15RC6=0xA
+
+# Copy a part number from a compatible donor image.
+python spd_tool.py patch --source donor.bin --target module.bin \
+  --out modified.bin --copy-partnum
 ```
 
-`--force` overrides module compatibility/HP identification checks; it does
-not permit cross-generation copies, truncated ranges or invalid HPT lengths.
+Named edits preserve neighboring bits and validate the field encoding. Delay
+fields accept engineering units and exact fractions; `0x` values select raw
+encoded counts. Patch ranges use inclusive endpoints.
 
-## Supported data
+Register values depend on the board layout, component revision and DRAM
+loading. Firmware may override SPD register words. A valid checksum establishes
+image integrity; it does not establish electrical compatibility or successful
+memory training. The graphical editor operates on files. EEPROM programming
+is handled separately by `spd_smbus.py`.
 
-| Area | DDR2 | DDR3 |
-| --- | --- | --- |
-| Type, revision, organization | Ranks, rows/columns, banks, device/bus/ECC widths, density, package, height | Density, ranks, addressing, widths, voltages, capacity |
-| Timings | CAS operating points; special tCK fractions; tAC; tRP/tRRD/tRCD/tRAS; tWR/tWTR/tRTP; extended tRC/tRFC; setup/hold, skew, PLL | MTB/FTB with signed fine corrections; tCK/tAA/tRCD/tRP/tRAS/tRC/tRFC/tWR/tRRD/tWTR/tRTP/tFAW; cycles and supported CAS downbins |
-| Manufacturing | Continuation-code manufacturer ID, part, revision, location, BCD date, serial | Module/DRAM IDs, part, revision, location, BCD date, serial |
-| Integrity | Byte 63 = sum(bytes 0–62) modulo 256 | CRC-16/XMODEM, initial 0, bytes 126–127 little endian; byte 0 selects coverage 0–116 or 0–125 |
-| Module details | Type bitmap, burst/refresh/configuration, raw attributes | Unbuffered mapping, mechanical fields, RDIMM registers/control words, LRDIMM buffer identification/personality bytes |
-| Extensions | Vendor/customer bytes preserved and editable | Existing DDR3 XMP profile layout and HP HPT; raw extension bytes retained |
+## Documentation
 
-Unknown manufacturer IDs keep their bank/code; the bundled name table covers
-common vendors, not all of JEP106. Reserved fields, DDR2 EPP, undocumented
-vendor data, revision-specific XMP extensions and LRDIMM buffer programming
-fields remain raw. Their complete bytes can be viewed, edited and round-tripped;
-this is not a claim to decode every proprietary extension. XMP profiles with
-invalid time bases, missing blocks or disabled flags are not presented as
-active operating profiles.
+- [Command reference](docs/CLI.md): inspection, editing, donor patches,
+  cataloging, conversion and hardware access.
+- [Registered modules](REGISTERED_MODULES.md): DDR3 RDIMM/LRDIMM fields,
+  personality mappings, legacy registered modules and HP SmartMemory.
+- [Image formats](docs/FORMATS.md): offsets, integrity checks, timing units,
+  manufacturing IDs and format boundaries.
+- [Development](CONTRIBUTING.md): source layout, tests and decoder extensions.
 
-Images from 128 to 256 bytes are retained at their original length. Partial
-DDR3 images report missing optional data. The loader accepts binary data or
-strict `HH`/`0xHH` hex tokens, commas/whitespace, optional hex offset prefixes
-(`0010:`), and `#`/`;` comments. It rejects oversized images and unsupported
-memory types instead of silently truncating or guessing SDR.
-
-A valid checksum confirms data integrity, not electrical compatibility or
-that an edited module will boot. Invalid encodings and inconsistent capacity
-are reported in decoded warnings; the raw bytes remain available for analysis.
-
-## Other tools
-
-- `sort_spd.py`: scans dumps, catalogs to SQLite/HTML and organizes samples;
-  DDR2 manufacturing and integrity now use the core decoder, and DDR3 CRC
-  respects byte 0's coverage bit.
-- `spd_smbus.py`: Linux hardware access. `--fix-crc` repairs DDR2/legacy
-  checksums or DDR3 CRCs according to memory type; hardware writes remain a
-  separate command.
-- `utils/spd_csv_to_bin.py`: CSV conversion, with generation-aware
-  `--fix-crc` integrity repair. CSV range endpoints are **exclusive** (unlike
-  CLI patch endpoints).
-- `hp_smartmemory_ident.py`: HP serial/HPT registry utilities.
+Use `python spd_tool.py --help` or a subcommand's `--help` for option details.
 
 ## Tests
 
@@ -109,22 +106,11 @@ are reported in decoded warnings; the raw bytes remain available for analysis.
 python -m unittest discover -v
 ```
 
-Tests cover synthetic DDR2/DDR3 vectors, both CRC coverages, signed fine
-offsets, ECC capacity, XMP profile flags, malformed/truncated inputs, CLI
-operations, catalog/SMBus integrity functions, editor undo/redo, atomic save
-failure, and every binary sample in the repository. Real Tk integration tests
-run when `DISPLAY` is available (or on Windows), otherwise they are skipped.
-No DIMM hardware is needed. See [REVIEW.md](REVIEW.md) for review findings and
-remaining validation limits.
-
-## References
-
-- [JEDEC 21-C](https://www.jedec.org/standards-documents/focus/memory-module-designs-dimms)
-- [i2c-tools decode-dimms](https://kernel.googlesource.com/pub/scm/utils/i2c-tools/i2c-tools/+/refs/heads/master/eeprom/decode-dimms)
-  (independent cross-check of byte meanings and timing encodings; no source
-  code copied into this MIT-licensed project).
-- [Intel DDR3 XMP overview](https://www.intel.cn/content/dam/doc/white-paper/extreme-memory-profile-ddr3-technology-paper.pdf)
+Tk integration tests run when a display is available. Tests cover decoding,
+bitfield edits, checksum handling, file operations, CLI commands and the
+bundled sample images. Hardware programming and boot behavior require
+validation on the target platform.
 
 ## License
 
-Source files retain their MIT SPDX notices from the project.
+MIT. Source files carry SPDX license identifiers where applicable.
