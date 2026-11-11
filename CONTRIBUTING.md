@@ -12,6 +12,7 @@
 | `spd_fields.py` | Named field masks, encodings, units and layout selection |
 | `spd_integrity.py` | Checksums, CRCs and bounded donor patches |
 | `spd_editor.py` | Editor document model and Tk interface |
+| `spd_overview.py` | Structured module overview presentation model |
 | `spd_tool.py` | Offline CLI |
 | `spd_smbus.py` | Linux hardware access |
 | `sort_spd.py` | Image scanning and SQLite/HTML cataloging |
@@ -29,6 +30,7 @@ python -m unittest discover -v
 python -m unittest tests.test_registered -v
 ```
 
+Hardware tests mock Linux ioctl/sysfs boundaries and never touch physical buses.
 Tk integration tests require a graphical display and Tk. They are skipped on
 headless Linux environments. Tests do not program physical EEPROMs.
 

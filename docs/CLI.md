@@ -30,7 +30,8 @@ python spd_editor.py module.bin
 
 | View | Purpose |
 | --- | --- |
-| Decoded data | Organization, timings, manufacturing data and diagnostics |
+| Overview | Structured identity, organization, operating points and integrity |
+| Decoded JSON | Complete decoded fields and raw details |
 | Byte editor | Individual bytes, hex ranges, part number and serial |
 | Registers / buffers | Named fields, legal encodings, locations and field notes |
 | HP SmartMemory | Registry matching, HPT edits and candidate computation |
@@ -149,13 +150,19 @@ the integrity field selected by the image's memory-type byte.
 ## Linux SMBus / I2C
 
 ```sh
-python spd_smbus.py scan --bus 1
-python spd_smbus.py read --bus 1 --addr 0x50 --out module.bin
-python spd_smbus.py scan-ee1004
-python spd_smbus.py write --help
+python spd_smbus.py doctor
+python spd_smbus.py list
+python spd_smbus.py read --bus 1 --addr 0x50 \
+  --out module.bin --report module-read.json
+python spd_smbus.py scan --bus 1 --probe
 ```
 
-Raw I2C operations require access to the selected `/dev/i2c-*` device. ee1004
-reads use the kernel's SPD interface. Writes use the raw I2C path; ee1004 is
-read-only in this utility. Inspect the selected image and device address before
-programming. Hardware write/verify behavior is platform-dependent.
+Discovery is passive unless `--probe` is specified. Reads prefer a kernel
+EEPROM interface and otherwise select SMBus byte-data or combined I2C according
+to adapter capabilities. Two matching snapshots and valid image integrity are
+required by default; `--allow-invalid` permits stable damaged images. Partial
+reads are saved without padding. Programming requires `--enable-write`, an
+explicit `--range`, an original-image `--backup`, and mandatory verification.
+
+See [Hardware acquisition](HARDWARE.md) for transport options, HP Gen8 platform
+constraints and programming requirements.

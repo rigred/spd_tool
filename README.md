@@ -53,7 +53,9 @@ partial images and checksum coverage.
 
 ## Editing
 
-The Tk editor provides decoded data, a byte table, named register/buffer
+The Tk editor opens on a structured module overview with identity, capacity,
+organization, timing limits, operating profiles and integrity diagnostics.
+It also provides decoded JSON, a byte table, named register/buffer
 fields, HP SmartMemory tools and image comparison. Double-click a byte or
 module setting to edit it. The register view supports group and text filters;
 **Show raw control/personality words** exposes expert fields. Edits support
@@ -96,6 +98,8 @@ is handled separately by `spd_smbus.py`.
   personality mappings, legacy registered modules and HP SmartMemory.
 - [Image formats](docs/FORMATS.md): offsets, integrity checks, timing units,
   manufacturing IDs and format boundaries.
+- [Hardware acquisition](docs/HARDWARE.md): Linux transport selection,
+  consistency checks, HP Gen8 diagnostics and explicit programming.
 - [Development](CONTRIBUTING.md): source layout, tests and decoder extensions.
 
 Use `python spd_tool.py --help` or a subcommand's `--help` for option details.

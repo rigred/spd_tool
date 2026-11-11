@@ -55,7 +55,7 @@ class TkTests(unittest.TestCase):
         from tests.test_registered import registered_ddr3
         self.path.write_bytes(registered_ddr3())
         self.app.open_path(self.path)
-        self.app.book.select(2)
+        self.app.book.select(self.app.module_tab)
         self.app.field_search.set('CA A drive')
         self.root.update()
         self.assertEqual(self.app.module_view.get_children(),('ca_a',))
@@ -139,6 +139,56 @@ class TkTests(unittest.TestCase):
                 self.app.edit_part()
             self.assertEqual(self.app.document.spd.data[73:91],b'GUI-VINTAGE       ')
             self.root.update()
+
+    def test_double_click_waits_for_mapping_and_uses_clicked_row(self):
+        import tkinter as tk
+        from types import SimpleNamespace
+        from tests.test_registered import legacy
+        self.path.write_bytes(legacy())
+        self.app.open_path(self.path)
+        self.app.book.select(self.app.module_tab)
+        self.app.field_group.set('Legacy timings');self.app.refresh_module_fields()
+        self.root.update()
+        box=self.app.module_view.bbox('tRAS')
+        self.assertTrue(box)
+        x,y,width,height=box
+        grabs=[]
+        original=tk.Toplevel.grab_set
+        def checked(dialog):
+            grabs.append(dialog.winfo_viewable())
+            self.assertTrue(dialog.winfo_viewable())
+            # Contents must exist before the WM can make the dialog modal.
+            self.assertTrue(dialog.winfo_children())
+            original(dialog)
+        with patch.object(tk.Toplevel,'grab_set',new=checked):
+            # Dispatch the actual widget binding, through Tk's double-click detection.
+            self.app.module_view.event_generate('<ButtonPress-1>',x=x+15,y=y+height//2,time=1000)
+            self.app.module_view.event_generate('<ButtonRelease-1>',x=x+15,y=y+height//2,time=1010)
+            self.app.module_view.event_generate('<ButtonPress-1>',x=x+15,y=y+height//2,time=1100)
+            self.app.module_view.event_generate('<ButtonRelease-1>',x=x+15,y=y+height//2,time=1110)
+            self.root.update()
+            self.assertTrue(grabs)
+            self.assertEqual(self.app._active_dialog.title(),'tRAS')
+            active=self.app._active_dialog
+            self.app.edit_module_field();self.root.update()
+            self.assertIs(self.app._active_dialog,active)
+            active.destroy();self.root.update()
+            self.assertIsNone(self.app._active_dialog)
+        # Empty space / heading double-clicks never edit a previous selection.
+        with patch.object(self.app,'edit_module_field') as edit:
+            self.app._edit_tree_row(SimpleNamespace(x=5,y=1),self.app.module_view,edit)
+            self.root.update();edit.assert_not_called()
+
+    def test_overview_updates_on_edit_and_undo(self):
+        self.assertEqual(self.app.book.select(),str(self.app.overview_tab))
+        self.assertEqual(self.app.overview_metrics['family'].get(),'DDR3')
+        self.assertEqual(self.app.overview_metrics['capacity'].get(),'8 GiB')
+        self.assertEqual(self.app.overview_metrics['integrity'].get(),'VALID')
+        self.app.document.set_part_number('OVERVIEW-EDIT');self.app.refresh()
+        self.assertEqual(self.app.overview_values[('Module identity','Part number')].get(),'OVERVIEW-EDIT')
+        self.app.undo()
+        self.assertEqual(self.app.overview_values[('Module identity','Part number')].get(),'TEST-DDR3')
+        self.assertTrue(self.app.overview_trees['timings'].get_children())
 
     def test_ddr2_open_and_validation_error(self):
         self.path.write_bytes(ddr2(128))

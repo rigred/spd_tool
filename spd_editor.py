@@ -165,9 +165,19 @@ class SPDEditor:
         from tkinter import ttk
         from tkinter.scrolledtext import ScrolledText
         self.root, self.document = root, None
+        self._active_dialog = None
+        self._configure_style()
+        root.configure(background='#EEF2F7')
         root.title('SPD Editor')
-        root.geometry('1100x780')
-        toolbar = ttk.Frame(root, padding=8)
+        root.geometry('1240x920')
+        root.minsize(1024,720)
+        header = tk.Frame(root,background='#14283F',padx=20,pady=14)
+        header.pack(fill='x')
+        tk.Label(header,text='SPD TOOL',font=('DejaVu Sans',18,'bold'),foreground='white',background='#14283F').pack(side='left')
+        tk.Label(header,text='MODULE CONFIGURATION',font=('DejaVu Sans',10),foreground='#B5C8DC',background='#14283F').pack(side='left',padx=20)
+        self.document_name=tk.StringVar(value='No image loaded')
+        tk.Label(header,textvariable=self.document_name,foreground='#DCE8F5',background='#14283F',anchor='e').pack(side='right')
+        toolbar = ttk.Frame(root, padding=(12,8))
         toolbar.pack(fill='x')
         for label, callback in [('Open...', self.open), ('Save', self.save), ('Save As...', self.save_as),
                                 ('Undo', self.undo), ('Redo', self.redo), ('Repair integrity', self.repair),
@@ -179,8 +189,11 @@ class SPDEditor:
         ttk.Label(root, textvariable=self.status, padding=8).pack(fill='x')
         book = ttk.Notebook(root)
         book.pack(fill='both', expand=True, padx=10, pady=5)
+        self.overview_tab=ttk.Frame(book)
+        book.add(self.overview_tab,text='Overview')
+        self._build_overview(self.overview_tab)
         decoded = ttk.Frame(book)
-        book.add(decoded, text='Decoded data')
+        book.add(decoded, text='Decoded JSON')
         self.decoded = ScrolledText(decoded, wrap='none', font='TkFixedFont')
         self.decoded.pack(fill='both', expand=True)
         raw = ttk.Frame(book)
@@ -195,13 +208,14 @@ class SPDEditor:
         scroll.pack(side='right', fill='y')
         self.bytes_view.pack(fill='both', expand=True)
         self.bytes_view.tag_configure('changed', background='#fff1bd')
-        self.bytes_view.bind('<Double-1>', lambda event: self.run(self.edit_selected))
+        self.bytes_view.bind('<Double-1>',lambda event:self._edit_tree_row(event,self.bytes_view,self.edit_selected))
         edits = ttk.Frame(raw, padding=8)
         edits.pack(fill='x')
         for label, cb in [('Edit selected byte...', self.edit_selected), ('Write hex range...', self.edit_range),
                           ('Part number...', self.edit_part), ('Serial number...', self.edit_serial)]:
             ttk.Button(edits, text=label, command=lambda f=cb: self.run(f)).pack(side='left', padx=3)
         module_tab = ttk.Frame(book)
+        self.module_tab=module_tab
         book.add(module_tab, text='Registers / buffers')
         filters = ttk.Frame(module_tab,padding=6)
         filters.pack(fill='x')
@@ -224,7 +238,7 @@ class SPDEditor:
         self.module_view.configure(yscrollcommand=module_scroll.set)
         module_scroll.pack(side='right',fill='y')
         self.module_view.pack(fill='both',expand=True)
-        self.module_view.bind('<Double-1>',lambda event:self.run(self.edit_module_field))
+        self.module_view.bind('<Double-1>',lambda event:self._edit_tree_row(event,self.module_view,self.edit_module_field))
         self.module_view.bind('<<TreeviewSelect>>',self.show_field_note)
         self.field_note=tk.StringVar(value='Select a setting for its description. Raw personality words require the buffer vendor datasheet.')
         ttk.Label(module_tab,textvariable=self.field_note,wraplength=1000,padding=6).pack(fill='x')
@@ -248,6 +262,155 @@ class SPDEditor:
         for key, action in [('<Control-o>', self.open), ('<Control-s>', self.save),
                             ('<Control-z>', self.undo), ('<Control-y>', self.redo)]:
             root.bind(key, lambda event, f=action: self.run(f))
+
+    def _configure_style(self):
+        from tkinter import ttk
+        style=ttk.Style(self.root)
+        if 'clam' in style.theme_names():style.theme_use('clam')
+        style.configure('.',font=('DejaVu Sans',10))
+        style.configure('TFrame',background='#EEF2F7')
+        style.configure('TLabel',background='#EEF2F7',foreground='#22364D')
+        style.configure('TButton',padding=(10,6))
+        style.configure('TCheckbutton',background='#EEF2F7')
+        style.configure('TNotebook',background='#EEF2F7',borderwidth=0)
+        style.configure('TNotebook.Tab',padding=(14,8))
+        style.map('TNotebook.Tab',background=[('selected','#FFFFFF')],foreground=[('selected','#135FAB')])
+        style.configure('Treeview',rowheight=27,background='white',fieldbackground='white',foreground='#22364D')
+        style.configure('Treeview.Heading',background='#DFE7F0',foreground='#243951',padding=(8,6),font=('DejaVu Sans',10,'bold'))
+        style.map('Treeview',background=[('selected','#D5E7F8')],foreground=[('selected','#102F52')])
+        style.configure('Card.TFrame',background='white',relief='solid',borderwidth=1)
+        style.configure('Card.TLabel',background='white',foreground='#22364D')
+        style.configure('Section.TLabel',background='white',foreground='#135FAB',font=('DejaVu Sans',11,'bold'))
+        style.configure('Metric.TLabel',background='white',foreground='#14283F',font=('DejaVu Sans',17,'bold'))
+        style.configure('Muted.TLabel',background='white',foreground='#62758B')
+
+    def _build_overview(self,parent):
+        import tkinter as tk
+        from tkinter import ttk
+        canvas=tk.Canvas(parent,background='#EEF2F7',highlightthickness=0)
+        scroll=ttk.Scrollbar(parent,orient='vertical',command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side='right',fill='y');canvas.pack(fill='both',expand=True)
+        body=ttk.Frame(canvas,padding=14)
+        item=canvas.create_window((0,0),window=body,anchor='nw')
+        canvas.bind('<Configure>',lambda event:canvas.itemconfigure(item,width=event.width))
+        body.bind('<Configure>',lambda event:canvas.configure(scrollregion=canvas.bbox('all')))
+        self.overview_title=tk.StringVar(value='Open an SPD image')
+        ttk.Label(body,textvariable=self.overview_title,font=('DejaVu Sans',16,'bold')).pack(anchor='w',pady=(0,10))
+        metrics=ttk.Frame(body);metrics.pack(fill='x')
+        self.overview_metrics={}
+        for column,(key,label) in enumerate((('capacity','USABLE CAPACITY'),('family','MEMORY FAMILY'),('speed','SPD MAXIMUM RATE'),('integrity','IMAGE INTEGRITY'))):
+            metrics.columnconfigure(column,weight=1,uniform='metrics')
+            card=ttk.Frame(metrics,style='Card.TFrame',padding=12)
+            card.grid(row=0,column=column,sticky='nsew',padx=(0,8) if column<3 else 0)
+            ttk.Label(card,text=label,style='Muted.TLabel').pack(anchor='w')
+            variable=tk.StringVar(value='--');self.overview_metrics[key]=variable
+            ttk.Label(card,textvariable=variable,style='Metric.TLabel').pack(anchor='w',pady=(6,0))
+        grid=ttk.Frame(body);grid.pack(fill='x',pady=12)
+        self.overview_values={}
+        for index,(section,labels) in enumerate((
+            ('Module identity',('Part number','Module manufacturer','DRAM manufacturer','Serial / SPD byte order','Manufacturing date','SPD revision')),
+            ('Organization',('Memory family','Module type','Usable capacity','Ranks','SDRAM device width','Data / checking width','Banks per device','Operating voltage')),
+            ('Operating point',('SPD maximum data rate','Clock at tCKmin','Minimum clock period','CL - tRCD - tRP - tRAS','Bandwidth designation','Module thermal sensor')),
+            ('Register / buffer',('Component manufacturer','Component revision','Register devices','DRAM package rows','Buffer orientation','Component family','Registered address/control')))):
+            grid.columnconfigure(index%2,weight=1,uniform='sections')
+            card=ttk.Frame(grid,style='Card.TFrame',padding=12)
+            card.grid(row=index//2,column=index%2,sticky='nsew',padx=(0,8) if index%2==0 else 0,pady=(0,8))
+            ttk.Label(card,text=section.upper(),style='Section.TLabel').grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,8))
+            card.columnconfigure(1,weight=1)
+            for row,label in enumerate(labels,1):
+                ttk.Label(card,text=label,style='Muted.TLabel').grid(row=row,column=0,sticky='nw',padx=(0,14),pady=3)
+                variable=tk.StringVar(value='--');self.overview_values[(section,label)]=variable
+                ttk.Label(card,textvariable=variable,style='Card.TLabel',wraplength=330).grid(row=row,column=1,sticky='nw',pady=3)
+        lower=ttk.Frame(body);lower.pack(fill='x')
+        for index in (0,1):lower.columnconfigure(index,weight=1,uniform='tables')
+        self.overview_trees={}
+        for index,(key,title,columns) in enumerate((('timings','TIMING LIMITS',('Parameter','Limit')),('profiles','OPERATING PROFILES',('Rate / profile','CL-tRCD-tRP-tRAS','Value','Source')))):
+            card=ttk.Frame(lower,style='Card.TFrame',padding=12)
+            card.grid(row=0,column=index,sticky='nsew',padx=(0,8) if index==0 else 0)
+            ttk.Label(card,text=title,style='Section.TLabel').pack(anchor='w',pady=(0,8))
+            tree=ttk.Treeview(card,columns=columns,show='headings',height=6)
+            for column in columns:
+                tree.heading(column,text=column);tree.column(column,width=110,minwidth=65)
+            scrollbar=ttk.Scrollbar(card,orient='vertical',command=tree.yview)
+            tree.configure(yscrollcommand=scrollbar.set);scrollbar.pack(side='right',fill='y');tree.pack(fill='both',expand=True)
+            self.overview_trees[key]=tree
+        integrity=ttk.Frame(body,style='Card.TFrame',padding=12);integrity.pack(fill='x',pady=12)
+        ttk.Label(integrity,text='INTEGRITY & DIAGNOSTICS',style='Section.TLabel').pack(anchor='w')
+        self.integrity_summary=tk.StringVar(value='No image loaded')
+        ttk.Label(integrity,textvariable=self.integrity_summary,style='Card.TLabel',wraplength=1060).pack(anchor='w',pady=8)
+        self.overview_warnings=tk.Text(integrity,height=3,wrap='word',background='#F7F9FC',foreground='#7D4B09',relief='flat',font=('DejaVu Sans',10))
+        self.overview_warnings.pack(fill='x')
+        ttk.Label(body,text='SPD capability data; configured host speed and memory-training results are not measured.',foreground='#62758B').pack(anchor='w',pady=(0,8))
+
+    def _refresh_overview(self):
+        from spd_overview import module_overview
+        view=module_overview(self.document.spd,self.document.hp_info())
+        self.overview_title.set(view['title'])
+        for key,variable in self.overview_metrics.items():variable.set(view[key])
+        for variable in self.overview_values.values():variable.set('Not specified')
+        for section,rows in view['sections'].items():
+            for label,value in rows:
+                variable=self.overview_values.get((section,label))
+                if variable is not None:variable.set(value)
+        for key,tree in self.overview_trees.items():
+            tree.delete(*tree.get_children())
+            for row in view[key]:tree.insert('','end',values=row)
+        self.integrity_summary.set('   |   '.join(f'{key}: {value}' for key,value in view['integrity_fields']))
+        self.set_text(self.overview_warnings,'\n'.join(view['warnings']) or 'No decoder warnings. Hardware validation is separate.')
+
+    def _edit_tree_row(self,event,tree,callback):
+        row=tree.identify_row(event.y)
+        if row and tree.identify_region(event.x,event.y) in ('cell','tree'):
+            tree.selection_set(row);tree.focus(row)
+            # Defer until the current button event has completed.
+            self.root.after_idle(lambda:self.run(callback))
+        return 'break'
+
+    def _new_dialog(self,title):
+        import tkinter as tk
+        active=self._active_dialog
+        if active is not None and active.winfo_exists():
+            active.lift();return None
+        dialog=tk.Toplevel(self.root)
+        dialog.withdraw()
+        dialog.title(title)
+        dialog.transient(self.root)
+        self._active_dialog=dialog
+        def closed(event):
+            if event.widget is dialog:
+                pending=getattr(dialog,'_activation_job',None)
+                if pending:
+                    self.root.after_cancel(pending)
+                    dialog._activation_job=None
+                if self._active_dialog is dialog:self._active_dialog=None
+        dialog.bind('<Destroy>',closed,add='+')
+        return dialog
+
+    def _present_dialog(self,dialog,focus=None):
+        import tkinter as tk
+        def acquire(event=None):
+            if event is not None and event.widget is not dialog:return
+            if not dialog.winfo_exists() or not dialog.winfo_viewable():return
+            try:
+                if dialog.grab_current() is dialog:return
+                dialog.grab_set()
+                if focus is not None:focus.focus_set()
+            except tk.TclError as exc:
+                # A window can be unmapped while the WM processes a transition.
+                # Its next Map/Visibility event will retry without an early grab.
+                if dialog.winfo_exists() and dialog.winfo_viewable():
+                    dialog.destroy()
+                    from tkinter import messagebox
+                    messagebox.showerror('SPD Editor',f'Cannot activate dialog: {exc}',parent=self.root)
+        dialog.bind('<Map>',acquire,add='+')
+        dialog.bind('<Visibility>',acquire,add='+')
+        dialog.update_idletasks()
+        dialog.deiconify()
+        def deferred_acquire():
+            dialog._activation_job=None
+            acquire()
+        dialog._activation_job=self.root.after_idle(deferred_acquire)
 
     def run(self, callback):
         from tkinter import messagebox
@@ -296,6 +459,8 @@ class SPDEditor:
         doc = self.require_document()
         spd = doc.spd
         self.root.title(f'{"* " if doc.dirty else ""}{Path(doc.path).name or "Untitled"} - SPD Editor')
+        self.document_name.set(Path(doc.path).name or 'Untitled image')
+        self._refresh_overview()
         crc = spd.decoded_data['crc_info']
         self.status.set(f'{spd.mem_type_name} | {len(spd.data)} bytes | Integrity: {crc["status"]} | '
                         f'{len(hexdiff(doc.saved, spd.data))} changed bytes')
@@ -315,7 +480,14 @@ class SPDEditor:
         self.group_selector.configure(values=groups)
         if self.field_group.get() not in groups:self.field_group.set('All groups')
         self.refresh_module_fields()
-        self.set_text(self.hp_text,json.dumps(doc.hp_info(),indent=2))
+        hp=doc.hp_info()
+        if hp.get('available'):
+            rows=['HP SMARTMEMORY','',f"Serial (SPD order)  {hp['serial']}",f"HPT marker          {'Present' if hp['present'] else 'Absent'}",f"HPT code            {hp['hpt']}",'', 'LEARNED FAMILY MATCHES']
+            rows.extend(item['name']+'  '+', '.join(item['equivalents']) for item in hp['matches'])
+            if not hp['matches']:rows.append('No matching family in the registry')
+            rows.extend(['',hp['note']])
+            self.set_text(self.hp_text,'\n'.join(rows))
+        else:self.set_text(self.hp_text,'HP HPT requires a DDR3 image containing bytes 176-183.')
         if selected and self.bytes_view.exists(selected[0]):
             self.bytes_view.selection_set(selected[0])
             self.bytes_view.see(selected[0])
@@ -347,10 +519,8 @@ class SPDEditor:
         selected=self.module_view.selection()
         if not selected:raise ValueError('Select a module setting to edit')
         f=field_by_key(doc.spd.data,selected[0])
-        dialog=tk.Toplevel(self.root)
-        dialog.title(f.label)
-        dialog.transient(self.root)
-        dialog.grab_set()
+        dialog=self._new_dialog(f.label)
+        if dialog is None:return
         body=ttk.Frame(dialog,padding=16);body.pack(fill='both',expand=True)
         ttk.Label(body,text=f'{f.label} - byte {f.offset}, bits {f.shift+f.bits-1}:{f.shift}').pack(anchor='w')
         ttk.Label(body,text=f.note or 'Adjacent bits are preserved.',wraplength=540).pack(anchor='w',pady=8)
@@ -373,8 +543,8 @@ class SPDEditor:
         buttons=ttk.Frame(body);buttons.pack(fill='x',pady=8)
         ttk.Button(buttons,text='Apply',command=lambda:self.run(apply)).pack(side='left')
         ttk.Button(buttons,text='Cancel',command=dialog.destroy).pack(side='left',padx=8)
-        entry.focus_set()
         dialog.bind('<Escape>',lambda event:dialog.destroy())
+        self._present_dialog(dialog,entry)
 
     def copy_module_settings(self):
         from tkinter import filedialog
@@ -404,7 +574,8 @@ class SPDEditor:
         registry=load_registry(str(Path(__file__).with_name('hp_families.json')))
         families={f'{fam.get("name",key)} [{key}]':key for key,fam in registry.items() if all(x in fam for x in ('A','B','K'))}
         if not families:raise ValueError('No learned HP families in hp_families.json')
-        dialog=tk.Toplevel(self.root);dialog.title('Compute HP HPT');dialog.transient(self.root);dialog.grab_set()
+        dialog=self._new_dialog('Compute HP HPT')
+        if dialog is None:return
         body=ttk.Frame(dialog,padding=16);body.pack()
         ttk.Label(body,text='Select a learned family, then calculate candidates for the current serial.').pack()
         choice=tk.StringVar(value=next(iter(families)))
@@ -428,6 +599,8 @@ class SPDEditor:
         ttk.Button(body,text='Calculate candidates',command=lambda:self.run(calculate)).pack(pady=4)
         ttk.Button(body,text='Apply selected HPT',command=lambda:self.run(apply)).pack(pady=4)
         ttk.Button(body,text='Cancel',command=dialog.destroy).pack(pady=4)
+        dialog.bind('<Escape>',lambda event:dialog.destroy())
+        self._present_dialog(dialog,picker)
 
     def edit_selected(self):
         from tkinter import simpledialog
