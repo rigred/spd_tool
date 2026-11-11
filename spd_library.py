@@ -7,20 +7,14 @@ import re
 from typing import Dict, List, Tuple, Optional
 
 from sdr_decoder import SDRDecoder
+from ddr2_decoder import DDR2Decoder
 from ddr3_decoder import DDR3Decoder
 
 # JEDEC memory-type byte (SPD[2])
 MEM_SDR   = 0x04   # PC SDR SDRAM (legacy 128B SPD)
 MEM_DDR1  = 0x07   # (not implemented here)
+MEM_DDR2  = 0x08
 MEM_DDR3  = 0x0B   # DDR3 (typically 256B SPD)
-
-_TEXT_HEX_RE = re.compile(
-    r"""
-    (?:0x)?                # optional '0x'
-    ([0-9A-Fa-f]{2})       # exactly two hex digits
-    """,
-    re.VERBOSE,
-)
 
 class SPD:
     """Holds and decodes an SPD image (128B legacy or 256B newer)."""
@@ -28,19 +22,15 @@ class SPD:
         if len(data) < 128:
             raise ValueError("SPD data must be at least 128 bytes (128B legacy or 256B).")
 
-        # Normalize to 128 or 256 bytes (favor full 256 when present)
-        if len(data) >= 256:
-            self.data = data[:256]
-        else:
-            self.data = data[:128]
+        if len(data) > 256:
+            raise ValueError("Images larger than 256 bytes are unsupported; extract one SPD first.")
+        self.data = bytes(data)
 
         self.path = path
         self.mem_type = self.data[2]
         self.mem_type_name = self._mem_type_label(self.mem_type)
 
-        # Choose decoder. If mem_type looks unknown but the image is 128B,
-        # attempt SDR as a heuristic—some very old dumps have byte2==0x00.
-        self.decoder = self._get_decoder_with_fallback()
+        self.decoder = self._get_decoder()
         self.decoded_data = self.decoder.decode()
 
     def _mem_type_label(self, v: int) -> str:
@@ -48,22 +38,17 @@ class SPD:
             MEM_SDR:  "SDR",
             MEM_DDR1: "DDR",
             MEM_DDR3: "DDR3",
+            MEM_DDR2: "DDR2",
         }.get(v, f"Unknown(0x{v:02X})")
 
-    def _get_decoder_with_fallback(self):
-        """Select the proper decoder based on SPD Byte 2, with a safe SDR fallback for 128B dumps."""
+    def _get_decoder(self):
+        """Select a decoder strictly by the memory-type byte."""
         if self.mem_type == MEM_SDR:
             return SDRDecoder(self.data)
+        if self.mem_type == MEM_DDR2:
+            return DDR2Decoder(self.data)
         if self.mem_type == MEM_DDR3:
             return DDR3Decoder(self.data)
-
-        # Heuristic fallback: legacy 128B images are almost always SDR/DDR era.
-        # Try SDR first; if it explodes, re-raise NotImplemented below.
-        if len(self.data) == 128:
-            try:
-                return SDRDecoder(self.data)
-            except Exception:
-                pass
 
         raise NotImplementedError(
             f"Memory type 0x{self.mem_type:02X} not supported yet "
@@ -74,50 +59,51 @@ class SPD:
         return self.decoded_data
 
     def patch(self, source_spd: 'SPD', args) -> bytes:
+        if self.mem_type not in (MEM_DDR2, MEM_DDR3):
+            raise ValueError('Patching is supported for DDR2 and DDR3')
         return self.decoder.patch(source_spd.data, args)
 
 def _try_load_text_hex(raw: bytes) -> Optional[bytes]:
-    """
-    Accepts text with hex tokens and returns bytes if >=128 bytes found.
-    Rules:
-      - Only exact byte tokens (HH or 0xHH), no single hex nibble.
-      - Ignores separators, commas, newlines, comments, etc.
+    """Parse strict byte tokens, optional offset prefixes and #/; comments.
+
+    Reject all other text rather than extracting accidental hex from words.
     """
     try:
-        txt = raw.decode("utf-8", errors="ignore")
-    except Exception:
+        txt = raw.decode("ascii")
+    except UnicodeDecodeError:
         return None
+    vals = []
+    expected_offset = 0
+    for line in txt.splitlines():
+        line = re.split(r"[#;]", line, maxsplit=1)[0].strip()
+        if not line:
+            continue
+        prefix = re.match(r"^(?:0x)?([0-9a-fA-F]{2,8}):\s*", line)
+        if prefix:
+            if int(prefix[1], 16) != expected_offset:
+                return None
+            line = line[prefix.end():]
+        for token in re.split(r"[\s,]+", line):
+            if not token:
+                continue
+            if not re.fullmatch(r"(?:0x)?[0-9a-fA-F]{2}", token):
+                return None
+            vals.append(int(token, 16))
+            expected_offset += 1
+    return bytes(vals) if 128 <= len(vals) <= 256 else None
 
-    vals: List[int] = []
-    for m in _TEXT_HEX_RE.finditer(txt):
-        vals.append(int(m.group(1), 16))
-
-    if len(vals) >= 256:
-        return bytes(vals[:256])
-    if len(vals) >= 128:
-        return bytes(vals[:128])
-    return None
 
 def load_spd_file(path: str) -> SPD:
-    """Loads an SPD file (binary or text-hex) and returns an SPD object."""
-    try:
-        with open(path, "rb") as f:
-            raw = f.read()
-    except FileNotFoundError:
-        raise FileNotFoundError(f"File not found at '{path}'")
-
-    # Binary first
-    if len(raw) >= 256:
-        return SPD(raw[:256], path)
-    if 128 <= len(raw) < 256:
-        return SPD(raw[:128], path)
-
-    # Text-hex fallback
+    """Read a binary image or strict hex-text dump without truncation."""
+    with open(path, "rb") as f:
+        raw = f.read()
     parsed = _try_load_text_hex(raw)
-    if parsed:
+    if parsed is not None:
         return SPD(parsed, path)
+    if raw and all(b in b"\t\r\n" or 32 <= b <= 126 for b in raw):
+        raise ValueError(f"{path}: Invalid hex-text SPD dump")
+    return SPD(raw, path)
 
-    raise ValueError(f"{path}: Not a valid SPD image (need ≥128 bytes in binary or text-hex).")
 
 def hexdiff(a: bytes, b: bytes) -> List[Tuple[int, Optional[int], Optional[int]]]:
     """

@@ -1,168 +1,130 @@
-# **SPD Tool for DDR Memory**
+# SPD Tool
 
-A modular command-line tool in Python for inspecting, comparing, patching, and organizing Serial Presence Detect (SPD) data from DDR2, DDR3, and DDR4 memory modules. This tool is intended for hardware enthusiasts, hackers, and system builders who need to verify, troubleshoot, or modify memory module firmware.
+Decode, compare, patch and edit **DDR2 and DDR3** SPD images with Python 3.9+
+(standard library only). The existing SDR decoder and Linux SMBus utilities
+are also included. DDR/DDR4/DDR5 decoding is not implemented by the core CLI;
+the catalog utility has separate legacy and DDR4 recognition.
 
-It provides detailed decoding of JEDEC standards, high-performance XMP profiles, and module-specific data for Unbuffered, Registered, and Load-Reduced DIMMs. Its modular architecture is designed for extension to support other memory standards like DDR5.
-
----
-
-## **Features**
-
-* **SPD Decoding (DDR2, DDR3, DDR4):**
-  * **JEDEC Standards:** Decodes standard timing parameters, capacity, and organization.
-  * **Intel XMP 1.3:** Decodes high-performance overclocking profiles, including voltage, timings, and command rate.
-  * **Module Types:** Parses specific data for **UDIMM**, **SO-DIMM**, **RDIMM**, and **LRDIMM** modules.
-  * **Manufacturer Identification:** Decodes JEDEC JEP-106 codes to show manufacturer names (e.g., SK hynix, Corsair, Kingston).
-
-* **Analysis & Verification:**
-  * **Timing Analysis:** Displays timings in both nanoseconds (ns) and clock cycles, with sanity checks for inconsistencies.
-  * **Down-clock Profiles:** Calculates and displays standard JEDEC timings for lower clock speeds.
-  * **CRC Validation:** Performs a CRC-16 check and automatically tests alternate coverage rules to validate data integrity.
-  * **HP SmartMemory Detection:** Identifies and decodes the HPT block found on HP server memory.
-
-* **Command-Line Interface:**
-  * **`dump`:** Provides a detailed, human-readable view of a single SPD file.
-  * **`diff`:** Shows a byte-level comparison of two SPD files.
-  * **`patch`:** A validated method for copying data between SPD files.
-  * **Programmer Mode:** An optional `--programmer` flag for the dump command shows byte/bit offsets and raw hex values.
-  * **JSON Export:** Exports all decoded data to a structured JSON file.
-
-* **SPD Organization and Cataloging:**
-  * Scans directories for DDR2, DDR3, and DDR4 SPD dumps.
-  * Organizes SPD files into a clean directory structure based on memory type, vendor, and part number.
-  * Creates and maintains a SQLite database of all scanned SPDs for easy querying and management.
-  * Generates an interactive HTML index of all cataloged SPDs, with a detailed modal view for each entry.
-
-* **HP SmartMemory Tools:**
-  * Identifies HP SmartMemory part numbers from serial and HPT codes using a learnable registry.
-  * Can compute the HPT code from a serial number and part number.
-
-* **Modular Design & Safety:**
-  * **Patching Safeguards:** The `patch` command includes warnings and checks to prevent errors like module type mismatches or creating a file with an invalid CRC.
-  * **Extensible Architecture:** The core decoding logic is separated from the UI, allowing for the addition of new memory type decoders (e.g., `ddr4_decoder.py`).
-
----
-
-## **File Structure**
-
-The tool is organized into a modular structure:
-
-* **`spd_tool.py`**: The main entry point and command-line interface.
-* **`spd_library.py`**: The core library that handles file loading and orchestrates the decoding process.
-* **`ddr3_decoder.py`**: A dedicated module containing all logic for decoding DDR3 SPD files.
-* **`sort_spd.py`**: A utility for organizing and cataloging SPD files.
-* **`hp_smartmemory_ident.py`**: A tool for identifying and working with HP SmartMemory.
-* **`utils/`**: A directory for helper and utility scripts.
-
----
-
-## **Requirements**
-
-* Python 3.x
-
----
-
-## **Usage**
-
-### **`spd_tool.py` (Inspect, Compare, Patch)**
-
-#### **Dump (Inspect a single SPD file)**
-
-The `dump` command provides a summary of an SPD file.
-
-**Standard View:**
+## Graphical editor
 
 ```sh
-python spd_tool.py dump --spd my_module.bin
-````
-
-**Programmer View (with offsets and hex values):**
-
-```sh
-python spd_tool.py dump --spd my_module.bin --programmer
+python spd_tool.py gui
+python spd_tool.py gui --spd module.bin
+# Equivalent standalone entry point:
+python spd_editor.py module.bin
 ```
 
-**JSON Export:**
+The Tk editor provides:
+
+- Decoded organization, timings, manufacturing, integrity status and warnings.
+- Every available byte in an editable table with decimal/hex offsets, field
+  labels, saved values and highlighted changes. Double-click a row to edit.
+- Multi-byte hex-range writes and dedicated part-number and serial dialogs.
+- Undo/redo, file comparison, JSON export, Save and Save As.
+- Checksum/CRC repair on save (enabled by default), atomic file replacement,
+  and an unsaved-changes prompt when opening another image or closing.
+
+Tk must be installed and a graphical display available. Some Linux Python
+installations need the distribution's `python3-tk` package. Windows/macOS
+Python installations commonly include Tk. The core CLI does not import Tk
+or the Linux-only SMBus driver unless that command is invoked.
+
+Save writes a **binary SPD image**, including when the input was hex text.
+Use Save As to retain an original text dump. The editor operates on files;
+it does not write to a DIMM EEPROM.
+
+## CLI
 
 ```sh
-python spd_tool.py dump --spd my_module.bin --json output.json
+python spd_tool.py dump --spd module.bin
+python spd_tool.py dump --spd module.bin --programmer
+python spd_tool.py dump --spd module.bin --json decoded.json
+python spd_tool.py dump --spd module.bin --json -
+python spd_tool.py diff --file-a original.bin --file-b edited.bin --show-maps
+python spd_tool.py patch --source donor.bin --target target.bin --out patched.bin --copy-partnum
+python spd_tool.py patch --source donor.bin --target target.bin --out patched.bin --copy-range 0x10:0x20
 ```
 
-#### **Diff (Compare two SPD files)**
+Patch ranges are **inclusive**. Manufacturer, part-number and vendor copy
+options use the selected generation's offsets. DDR2 uses manufacturing
+bytes 64–98; DDR3 uses 117–149. Cross-generation copies and ranges beyond
+either image are rejected. A module-type mismatch requires `--force`.
+Patching repairs the destination's generation-specific integrity field,
+including when byte 0 changes DDR3 CRC coverage.
 
-The `diff` command shows a byte-for-byte comparison of two files.
+HP HPT operations are DDR3-specific:
 
 ```sh
-python spd_tool.py diff --file-a original.bin --file-b modified.bin
+python spd_tool.py patch --source hp.bin --target target.bin --out patched.bin --copy-hpt --force
 ```
 
-#### **Patch (Modify an SPD file)**
+`--force` overrides module compatibility/HP identification checks; it does
+not permit cross-generation copies, truncated ranges or invalid HPT lengths.
 
-The `patch` command copies data from a source file to a target file and writes the result to a new file. The CRC is automatically recalculated and validated.
+## Supported data
 
-**Example: Copying an HP SmartMemory block:**
+| Area | DDR2 | DDR3 |
+| --- | --- | --- |
+| Type, revision, organization | Ranks, rows/columns, banks, device/bus/ECC widths, density, package, height | Density, ranks, addressing, widths, voltages, capacity |
+| Timings | CAS operating points; special tCK fractions; tAC; tRP/tRRD/tRCD/tRAS; tWR/tWTR/tRTP; extended tRC/tRFC; setup/hold, skew, PLL | MTB/FTB with signed fine corrections; tCK/tAA/tRCD/tRP/tRAS/tRC/tRFC/tWR/tRRD/tWTR/tRTP/tFAW; cycles and supported CAS downbins |
+| Manufacturing | Continuation-code manufacturer ID, part, revision, location, BCD date, serial | Module/DRAM IDs, part, revision, location, BCD date, serial |
+| Integrity | Byte 63 = sum(bytes 0–62) modulo 256 | CRC-16/XMODEM, initial 0, bytes 126–127 little endian; byte 0 selects coverage 0–116 or 0–125 |
+| Module details | Type bitmap, burst/refresh/configuration, raw attributes | Unbuffered mapping, mechanical fields, RDIMM registers/control words, LRDIMM buffer identification/personality bytes |
+| Extensions | Vendor/customer bytes preserved and editable | Existing DDR3 XMP profile layout and HP HPT; raw extension bytes retained |
+
+Unknown manufacturer IDs keep their bank/code; the bundled name table covers
+common vendors, not all of JEP106. Reserved fields, DDR2 EPP, undocumented
+vendor data, revision-specific XMP extensions and LRDIMM buffer programming
+fields remain raw. Their complete bytes can be viewed, edited and round-tripped;
+this is not a claim to decode every proprietary extension. XMP profiles with
+invalid time bases, missing blocks or disabled flags are not presented as
+active operating profiles.
+
+Images from 128 to 256 bytes are retained at their original length. Partial
+DDR3 images report missing optional data. The loader accepts binary data or
+strict `HH`/`0xHH` hex tokens, commas/whitespace, optional hex offset prefixes
+(`0010:`), and `#`/`;` comments. It rejects oversized images and unsupported
+memory types instead of silently truncating or guessing SDR.
+
+A valid checksum confirms data integrity, not electrical compatibility or
+that an edited module will boot. Invalid encodings and inconsistent capacity
+are reported in decoded warnings; the raw bytes remain available for analysis.
+
+## Other tools
+
+- `sort_spd.py`: scans dumps, catalogs to SQLite/HTML and organizes samples;
+  DDR2 manufacturing and integrity now use the core decoder, and DDR3 CRC
+  respects byte 0's coverage bit.
+- `spd_smbus.py`: Linux hardware access. `--fix-crc` repairs DDR2/legacy
+  checksums or DDR3 CRCs according to memory type; hardware writes remain a
+  separate command.
+- `utils/spd_csv_to_bin.py`: CSV conversion, with generation-aware
+  `--fix-crc` integrity repair. CSV range endpoints are **exclusive** (unlike
+  CLI patch endpoints).
+- `hp_smartmemory_ident.py`: HP serial/HPT registry utilities.
+
+## Tests
 
 ```sh
-python spd_tool.py patch --source hp_module.bin --target generic_module.bin --out patched_module.bin --copy-hpt --force
+python -m unittest discover -v
 ```
 
-### **Utility Scripts**
+Tests cover synthetic DDR2/DDR3 vectors, both CRC coverages, signed fine
+offsets, ECC capacity, XMP profile flags, malformed/truncated inputs, CLI
+operations, catalog/SMBus integrity functions, editor undo/redo, atomic save
+failure, and every binary sample in the repository. Real Tk integration tests
+run when `DISPLAY` is available (or on Windows), otherwise they are skipped.
+No DIMM hardware is needed. See [REVIEW.md](REVIEW.md) for review findings and
+remaining validation limits.
 
-#### **`sort_spd.py` (Organize and Catalog)**
+## References
 
-This script scans a directory for SPD files, organizes them into a structured output directory, and creates a SQLite database and HTML index.
+- [JEDEC 21-C](https://www.jedec.org/standards-documents/focus/memory-module-designs-dimms)
+- [i2c-tools decode-dimms](https://kernel.googlesource.com/pub/scm/utils/i2c-tools/i2c-tools/+/refs/heads/master/eeprom/decode-dimms)
+  (independent cross-check of byte meanings and timing encodings; no source
+  code copied into this MIT-licensed project).
+- [Intel DDR3 XMP overview](https://www.intel.cn/content/dam/doc/white-paper/extreme-memory-profile-ddr3-technology-paper.pdf)
 
-```sh
-python sort_spd.py /path/to/your/spds --out-root /path/to/organized_spds --db spd_catalog.sqlite3 --html index.html --recursive
-```
+## License
 
-#### **`hp_smartmemory_ident.py` (HP SmartMemory Identification)**
-
-This script can identify, learn, and compute HP SmartMemory HPT codes.
-
-**Identify an existing module:**
-
-```sh
-python hp_smartmemory_ident.py identify --serial 0x4132E061 --hpt 0xFCD7E032
-```
-
-**Learn a new memory family (requires two samples):**
-
-```sh
-python hp_smartmemory_ident.py learn --serial1 <s1> --hpt1 <h1> --serial2 <s2> --hpt2 <h2> --part-number "712383-081"
-```
-
-**Compute HPT from serial and part number:**
-
-```sh
-python hp_smartmemory_ident.py hpt --serial 0x4132E061 --part-number "712383-081"
-```
-
-#### **`utils/spd_csv_to_bin.py` (CSV to Binary Converter)**
-
-This utility converts SPD data from a CSV format, like those provided by manufacturers such as Micron, into a raw binary `.bin` file that can be used with this tool.
-
-**Features:**
-
-* Parses CSV files with decimal indices and value columns.
-* Supports ranges in the index column (e.g., "60 - 76").
-* Validates that the length of the provided value (hex run or string) matches the length of the specified range.
-* Can automatically calculate and write the correct DDR3 CRC checksum for the generated binary file.
-
-**Usage:**
-
-```sh
-python utils/spd_csv_to_bin.py micron_data.csv --out spd.bin --fix-crc
-```
-
-## **Extending the Tool**
-
-To add support for a new memory type (e.g., DDR4), you would:
-
-1. Create a new `ddr4_decoder.py` file, mirroring the structure of `ddr3_decoder.py`.
-2. Implement the specific decoding logic for the DDR4 standard within the new file.
-3. Update the `_get_decoder` factory function in `spd_library.py` to recognize the DDR4 memory type byte and return an instance of your new `DDR4Decoder`.
-
-## **License**
-
-This project is licensed under the MIT License.
+Source files retain their MIT SPDX notices from the project.

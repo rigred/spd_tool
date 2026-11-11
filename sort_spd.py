@@ -337,7 +337,7 @@ def ddr3_crc_pair(block: bytes) -> tuple[int|None, int|None, str]:
     if not looks_like_ddr3(block):
         return (None, None, "n/a")
     stored = le16(block, 126)
-    computed = crc16_xmodem(block[0:117])
+    computed = crc16_xmodem(block[:117 if block[0] & 0x80 else 126])
     status = "ok" if stored == computed else "bad"
     return (stored, computed, status)
 
@@ -397,22 +397,25 @@ def parse_ddr4(block: bytes) -> dict:
 
 # ---------------------- DDR2 (heuristic) -------------------
 def looks_like_ddr2_spd(block: bytes) -> bool:
-    return len(block) == SPD256 and block[2] == MEM_DDR2
+    return len(block) in (SPD128, SPD256) and block[2] == MEM_DDR2
 
 def parse_ddr2(block: bytes) -> dict:
-    bank, code = block[117], block[118]
-    pn = block[128:146].rstrip(b"\x00").decode("ascii", errors="replace")
-    if not pn:
-        pn = block[73:91].rstrip(b"\x00").decode("ascii", errors="replace")
-    serial = int.from_bytes(block[122:126], 'little')
-    return {
-        "mem_type": "DDR2",
-        "serial_u32": serial,
-        "part_number_str": pn,
-        "mfg_id_bank": bank, "mfg_id_code": code,
-        "mfg_id_str": vendor_from_id(bank, code),
-        "crc_status": "weak_check",
-    }
+    from ddr2_decoder import DDR2Decoder
+    decoded = DDR2Decoder(block).decode()
+    bank = 0
+    for code in block[64:72]:
+        if code != 0x7F:
+            break
+        bank += 1
+    else:
+        code = 0
+    crc = decoded['crc_info']
+    return dict(mem_type='DDR2', serial_u32=int.from_bytes(block[95:99], 'big'),
+                part_number_str=decoded['manufacturing']['module_part_number'],
+                mfg_id_bank=bank, mfg_id_code=code,
+                mfg_id_str=decoded['manufacturing']['module_mfg_id'],
+                crc_status='ok' if crc['status'] == 'VALID' else 'bad',
+                stored_crc=crc['stored'], computed_crc=crc['computed'])
 
 # ---------------------- HP HPT tag -------------------------
 def extract_hp_hpt(block: bytes):
@@ -481,6 +484,8 @@ def scan_file_for_spd(path: str, step: int) -> List[dict]:
         for off, block in scan_windows(data, SPD128, step):
             if looks_like_ddr3(block):
                 meta = parse_ddr3(block)
+            elif looks_like_ddr2_spd(block):
+                meta = parse_ddr2(block)
             elif looks_like_ddr1(block):
                 meta = parse_ddr1(block)
             elif looks_like_sdr(block):

@@ -10,7 +10,6 @@ import argparse
 import json
 import sys
 from spd_library import load_spd_file, hexdiff
-from spd_smbus import main as smbus_main
 
 def _json_default(o):
     # Make decoder output JSON-serializable.
@@ -51,7 +50,7 @@ def cmd_diff(args: argparse.Namespace):
 
     for label, spd in (("File A", spd_a), ("File B", spd_b)):
         crc = spd.decoded_data['crc_info']
-        print(f"[{label} CRC] Status: {crc['status']} (Coverage: {crc['coverage']}, Variant: {crc['variant']})")
+        print(f"[{label} CRC] Status: {crc['status']} (Coverage: {crc['coverage']}, Variant: {crc.get('variant', crc.get('type', 'unknown'))})")
 
     diffs = hexdiff(spd_a.data, spd_b.data)
     print(f"\n[Diff] {len(diffs)} differing bytes")
@@ -61,7 +60,9 @@ def cmd_diff(args: argparse.Namespace):
         print("  -------|------------|------------")
         diff_list = diffs[:args.limit] if args.limit else diffs
         for off, a, b in diff_list:
-            print(f"  {off:03d}    |     {a:02X}     |     {b:02X}")
+            av = '--' if a is None else f'{a:02X}'
+            bv = '--' if b is None else f'{b:02X}'
+            print(f"  {off:03d}    |     {av}     |     {bv}")
 
     if args.show_maps:
         print("\n--- File A SPD field map (raw) ---")
@@ -85,6 +86,13 @@ def main():
     parser = argparse.ArgumentParser(description="Modular SPD Tool (SDR + DDR families).")
     subparsers = parser.add_subparsers(dest="cmd", required=True)
 
+    p_gui = subparsers.add_parser('gui', help='Open the offline Tk graphical SPD editor.')
+    p_gui.add_argument('--spd', help='Optional SPD image to open.')
+    def _gui_cmd(ns):
+        from spd_editor import main as gui_main
+        gui_main(ns.spd)
+    p_gui.set_defaults(func=_gui_cmd)
+
     # Dump command
     p_dump = subparsers.add_parser("dump", help="Decode and display a single SPD file.")
     p_dump.add_argument("--spd", required=True, help="Input SPD file (.bin or text).")
@@ -107,11 +115,11 @@ def main():
     p_patch.add_argument("--target", required=True, help="Target SPD to be patched.")
     p_patch.add_argument("--out", required=True, help="Output file for patched SPD.")
     p_patch.add_argument("--force", action="store_true", help="Force potentially unsafe operations.")
-    p_patch.add_argument("--copy-vendor", action="store_true", help="Copy vendor/customer region (bytes 176-255).")
+    p_patch.add_argument("--copy-vendor", action="store_true", help="Copy vendor/customer region (generation-specific vendor/customer bytes).")
     p_patch.add_argument("--copy-hpt", action="store_true", help="Copy only the HP SmartMemory HPT block (bytes 176-183).")
     p_patch.add_argument("--set-hpt", type=lambda x: bytes.fromhex(x.replace(":", "")), help="Set a specific 4-byte HPT code (e.g., A40185E8).")
-    p_patch.add_argument("--copy-mfgid", action="store_true", help="Copy JEDEC manufacturer ID (bytes 117-118).")
-    p_patch.add_argument("--copy-partnum", action="store_true", help="Copy module part number (bytes 128-145).")
+    p_patch.add_argument("--copy-mfgid", action="store_true", help="Copy JEDEC manufacturer ID (generation-specific manufacturer bytes).")
+    p_patch.add_argument("--copy-partnum", action="store_true", help="Copy module part number (generation-specific part-number bytes).")
     p_patch.add_argument("--copy-range", action="append", help="Copy an arbitrary byte range START:END (e.g., 0x10:0x20).")
     p_patch.set_defaults(func=cmd_patch)
 
@@ -119,6 +127,7 @@ def main():
     p.add_argument("args", nargs=argparse.REMAINDER, help="pass-through to spd_smbus.py")
     def _smbus_cmd(ns):
     # forward args to the expansion tool's argparse
+        from spd_smbus import main as smbus_main
         sys.exit(smbus_main(ns.args))
     p.set_defaults(func=_smbus_cmd)
 
@@ -126,7 +135,7 @@ def main():
     args = parser.parse_args()
     try:
         args.func(args)
-    except (ValueError, FileNotFoundError, SystemExit, NotImplementedError) as e:
+    except (ValueError, OSError, NotImplementedError, ImportError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 

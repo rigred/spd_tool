@@ -22,6 +22,9 @@ import argparse
 import csv
 import re
 import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from spd_integrity import repair_integrity, integrity_info
 from typing import Dict, Iterable, List, Optional, Tuple
 
 HEX_PAIR_RE = re.compile(r"^[0-9A-Fa-f]{2}$")
@@ -230,20 +233,19 @@ def main() -> None:
     ap.add_argument("-o", "--out", default="spd.bin", help="Output .bin path")
     ap.add_argument("--length", type=int, default=256, help="Total output bytes (default 256)")
     ap.add_argument("--encoding", default="ascii", help="Encoding for string ranges (default ascii)")
-    ap.add_argument("--fix-crc", action="store_true", help="Recompute DDR3 base CRC over bytes 0..125 → bytes 126..127 (LSB,MSB)")
+    ap.add_argument("--fix-crc", action="store_true", help="Repair generation-specific DDR2 checksum or DDR3 CRC")
     args = ap.parse_args()
 
     records = read_csv_records(args.csv)
     buf = build_buffer(records, args.length, args.encoding)
 
     if args.fix_crc:
-        if len(buf) < 128:
-            print("[warn] Output shorter than 128 bytes; skipping CRC update")
-        else:
-            crc = crc16_ccitt(bytes(buf[0:126]))
-            buf[126] = crc & 0xFF
-            buf[127] = (crc >> 8) & 0xFF
-            print(f"[info] Base CRC16 (0..125) = 0x{crc:04X} → [126]=0x{buf[126]:02X}, [127]=0x{buf[127]:02X}")
+        try:
+            buf[:] = repair_integrity(buf)
+        except ValueError as exc:
+            ap.error(str(exc))
+        info = integrity_info(buf)
+        print(f"[info] Repaired {info['variant']} over {info['coverage']}")
 
     with open(args.out, 'wb') as f:
         f.write(buf)

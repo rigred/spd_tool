@@ -86,11 +86,8 @@ def crc16_xmodem(data: bytes) -> int:
     return reg & 0xFFFF
 
 def fix_base_crc(spd: bytearray) -> None:
-    if len(spd) < 128:
-        return
-    crc = crc16_xmodem(bytes(spd[0:117]))  # 0..116 inclusive
-    spd[126] = crc & 0xFF
-    spd[127] = (crc >> 8) & 0xFF
+    from spd_integrity import repair_integrity
+    spd[:] = repair_integrity(spd)
 
 def hexdump(b: bytes, width: int = 16) -> str:
     lines=[]
@@ -303,7 +300,7 @@ def cmd_write(args):
     with open(args.infile, "rb") as f:
         img = bytearray(f.read())
     if len(img) < 256: raise SystemExit("Input image must be at least 256 bytes")
-    if args.fix_crc: fix_base_crc(img); print("Fixed base CRC16 (0..116)")
+    if args.fix_crc: fix_base_crc(img); print("Repaired generation-specific SPD integrity")
     start,end = args.range
     fd = open_bus(args.bus)
     try:

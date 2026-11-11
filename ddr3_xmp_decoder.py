@@ -10,7 +10,7 @@ import math
 
 def decode_xmp(data: bytes) -> Optional[Dict]:
     """
-    Intel XMP for DDR3 (per XMP 1.1/1.2 table you provided).
+    Intel XMP for DDR3 (DDR3 profile layout).
 
     Header (176..183):
       176 = 0x0C, 177 = 0x4A (magic)
@@ -55,7 +55,7 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
         return (v >> lo) & mask
 
     # 1) Validate header
-    if len(data) < 220 or data[176] != 0x0C or data[177] != 0x4A:
+    if len(data) < 184 or data[176] != 0x0C or data[177] != 0x4A:
         return None
 
     b178 = data[178]
@@ -73,10 +73,8 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
     def mtb_ns_from(dd_off, dv_off):
         dd = data[dd_off]
         dv = data[dv_off]
-        if dv == 0:
-            # Fallback to base SPD MTB (bytes 10/11) if divisor is zero
-            base_div = data[11] or 1
-            return (data[10] or 1) / base_div
+        if not dd or not dv:
+            return 0
         return dd / dv
 
     mtb_p1_ns = mtb_ns_from(180, 181)
@@ -108,6 +106,8 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
         return int(math.ceil(ns_val / tck_ns)) if tck_ns > 0 else 0
 
     def parse_profile(base: int, mtb_ns: float, enabled: bool, dimms_per_ch: int, idx: int):
+        if not enabled or mtb_ns <= 0 or len(data) < base + 35:
+            return None
         try:
             vb = data[base + 0]
             v_dd = decode_voltage(vb)
@@ -162,7 +162,9 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
             data_rate = int(round(2000.0 / tCK_ns)) if tCK_ns > 0 else 0
 
             # Timings in clocks
-            CL   = clocks_from_ns(tAA_ns,  tCK_ns)
+            required_cl = clocks_from_ns(tAA_ns, tCK_ns)
+            cas_list = cas_bitmap(clmap0, clmap1)
+            CL = next((cl for cl in cas_list if cl >= required_cl), 0)
             tRCD = clocks_from_ns(tRCD_ns, tCK_ns)
             tRP  = clocks_from_ns(tRP_ns,  tCK_ns)
             tRAS = clocks_from_ns(tRAS_ns, tCK_ns)
@@ -200,6 +202,7 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
                     "turnaround_W2R": w2r_raw, "back_to_back": b2b_raw,
                     "cmd_rate_mode_raw": cmd_mode, "asr_perf_raw": asr_raw,
                     "vendor_personality": vend_raw,
+                    "extension_bytes": data[base +25:base +34].hex(),
                 },
             }
         except IndexError:
@@ -219,6 +222,7 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
         "profile_2_enabled": p2_enabled,
         "profile_1_dimms_per_channel": p1_dimms_per_ch,
         "profile_2_dimms_per_channel": p2_dimms_per_ch,
+        "raw_header": data[176:185].hex(),
         "profile_1_mtb_ns": round(mtb_p1_ns, 6),
         "profile_2_mtb_ns": round(mtb_p2_ns, 6),
     }
