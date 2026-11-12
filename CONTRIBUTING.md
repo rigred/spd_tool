@@ -15,6 +15,11 @@
 | `spd_overview.py` | Structured module overview presentation model |
 | `spd_tool.py` | Offline CLI |
 | `spd_smbus.py` | Linux hardware access |
+| `spd_hardware.py` | Acquisition ranking, target snapshots and programming plans |
+| `spd_hardware_gui.py` | Background hardware jobs and Tk programmer workflow |
+| `spd_bridge.py` | Framed USB serial transport and capability negotiation |
+| `firmware/spd_bridge/` | Reference microcontroller firmware |
+| `spd_firmware.py` | Offline embedded SPD scanning, extraction and provenance |
 | `sort_spd.py` | Image scanning and SQLite/HTML cataloging |
 | `hp_smartmemory_ident.py` | HP family registry and modular relationships |
 | `tests/` | Decoder, CLI, editor-model and Tk tests |
@@ -33,6 +38,12 @@ python -m unittest tests.test_registered -v
 Hardware tests mock Linux ioctl/sysfs boundaries and never touch physical buses.
 Tk integration tests require a graphical display and Tk. They are skipped on
 headless Linux environments. Tests do not program physical EEPROMs.
+
+Bridge firmware integration tests use `g++` when available to compile the
+shipped sketch against simulated Arduino/Wire APIs. They exercise the Python
+transport and programmer against that firmware without a serial port or MCU.
+The simulator tests are skipped when a C++ compiler is unavailable. Validate
+board-core compilation and electrical behavior separately on the target fixture.
 
 The suite includes supplied images, synthetic edge cases and published
 registered-SDR configurations with independently specified checksums. Preserve

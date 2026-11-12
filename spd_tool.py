@@ -114,6 +114,8 @@ def main():
     """Builds and executes the command-line interface."""
     parser = argparse.ArgumentParser(description="Modular SPD Tool (SDR + DDR families).")
     subparsers = parser.add_subparsers(dest="cmd", required=True)
+    from spd_firmware import add_parser as add_firmware_parser
+    add_firmware_parser(subparsers)
 
     p_gui = subparsers.add_parser('gui', help='Open the offline Tk graphical SPD editor.')
     p_gui.add_argument('--spd', help='Optional SPD image to open.')

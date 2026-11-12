@@ -257,6 +257,10 @@ class SPDEditor:
         self.diff = ScrolledText(book, wrap='none', font='TkFixedFont')
         book.add(self.diff, text='Comparison')
         self.book = book
+        from spd_hardware_gui import HardwarePanel
+        self.hardware_tab = ttk.Frame(book)
+        book.add(self.hardware_tab, text='Hardware / programmer')
+        self.hardware = HardwarePanel(self, self.hardware_tab)
         self.diff.configure(state='disabled')
         root.protocol('WM_DELETE_WINDOW', lambda: self.run(self.close))
         for key, action in [('<Control-o>', self.open), ('<Control-s>', self.save),
@@ -437,6 +441,8 @@ class SPDEditor:
     def open_path(self, path):
         spd = load_spd_file(path)
         self.document = EditorDocument(spd.data, path)
+        self.hardware.plan = None
+        self.hardware.end.set(str(len(spd.data)-1))
         self.set_text(self.diff, '')
         self.refresh()
 
@@ -697,6 +703,8 @@ class SPDEditor:
             Path(path).write_text(json.dumps(doc.spd.decoded_data, indent=2, default=lambda x: bytes(x).hex()) + '\n', encoding='utf-8')
 
     def close(self):
+        if self.hardware.busy:
+            raise ValueError('Wait for the hardware operation to finish before closing; reads and scans can be cancelled')
         if self.confirm_discard():
             self.root.destroy()
 

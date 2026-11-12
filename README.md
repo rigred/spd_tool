@@ -3,6 +3,10 @@
 A Python toolkit for inspecting, comparing and editing SDR, DDR, DDR2 and
 DDR3 Serial Presence Detect images. Includes a Tk editor, DDR3 RDIMM/LRDIMM
 register fields, HP SmartMemory utilities, and Linux SMBus access.
+The editor includes hardware discovery, acquisition and reviewed programming,
+with an optional USB serial interface for standalone microcontroller fixtures.
+An offline firmware scanner extracts embedded SPD candidates from BIOS images
+and unpacked UEFI sections, including low-power memory signatures.
 
 ## Support
 
@@ -24,6 +28,7 @@ decoder; DDR4/DDR5 editing, FBDIMM and Rambus formats are outside its scope.
 - Tk and a graphical display for the editor. On Debian/Ubuntu, install
   `python3-tk` if it is not included with Python.
 - Linux I2C device access for `spd_smbus.py`.
+- Optional `pyserial` for the external USB bridge (`requirements-bridge.txt`).
 
 Run commands from the repository root. The examples use `python`; substitute
 `python3` where required by the local installation.
@@ -87,8 +92,11 @@ encoded counts. Patch ranges use inclusive endpoints.
 Register values depend on the board layout, component revision and DRAM
 loading. Firmware may override SPD register words. A valid checksum establishes
 image integrity; it does not establish electrical compatibility or successful
-memory training. The graphical editor operates on files. EEPROM programming
-is handled separately by `spd_smbus.py`.
+memory training. EEPROM programming is available in the editor's
+**Hardware / programmer** tab and through `spd_smbus.py`. The GUI presents
+target identity and exact changes, saves a full backup and requires complete
+read-back verification. See the [hardware GUI guide](docs/GUI_HARDWARE.md) and
+[external bridge setup](docs/EXTERNAL_BRIDGE.md).
 
 ## Documentation
 
@@ -100,6 +108,12 @@ is handled separately by `spd_smbus.py`.
   manufacturing IDs and format boundaries.
 - [Hardware acquisition](docs/HARDWARE.md): Linux transport selection,
   consistency checks, HP Gen8 diagnostics and explicit programming.
+- [GUI hardware workflow](docs/GUI_HARDWARE.md): adapter scans, acquisition
+  quality, target selection, change reviews, backup and verification.
+- [External bridge](docs/EXTERNAL_BRIDGE.md): bench fixtures, reference MCU
+  firmware, USB serial setup and the SPD1 protocol.
+- [Embedded SPD extraction](docs/FIRMWARE.md): BIOS image scanning, compressed
+  sections, memory-down profiles and extraction confidence.
 - [Development](CONTRIBUTING.md): source layout, tests and decoder extensions.
 
 Use `python spd_tool.py --help` or a subcommand's `--help` for option details.

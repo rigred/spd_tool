@@ -1,5 +1,12 @@
 # Linux SPD acquisition
 
+The editor exposes acquisition and programming in its **Hardware / programmer**
+tab. See the [GUI workflow](GUI_HARDWARE.md) for reviewed writes, or the
+[external bridge guide](EXTERNAL_BRIDGE.md) for standalone DIMM fixtures.
+
+Soldered RAM may use firmware-supplied SPD data without an exposed EEPROM.
+Use [embedded SPD extraction](FIRMWARE.md) to investigate BIOS images offline.
+
 `spd_smbus.py` provides passive adapter discovery, consistent EEPROM reads and
 an explicit raw-I2C programming path. It does not configure PCI devices, select
 mux channels, unbind drivers, load kernel modules or access private iLO buses.

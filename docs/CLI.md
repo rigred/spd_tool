@@ -20,6 +20,28 @@ python spd_tool.py diff --file-a original.bin --file-b modified.bin \
 stdout. Diff reports length differences as well as changed bytes; absent tail
 bytes are shown as `--`.
 
+## Firmware SPD extraction
+
+```sh
+python spd_tool.py firmware scan --input BIOS.cap --out extracted-spd
+python spd_tool.py firmware scan --input BIOS.cap.dump \
+  --include-invalid --out candidate-spd
+python spd_tool.py firmware scan --input BIOS.cap --json
+```
+
+Scan a binary firmware image or recursively scan already unpacked sections.
+`--out` must name a new directory; omit it for a scan without files. Extraction
+defaults to a 128-byte base block. `--length 256` or `--length 512` explicitly
+includes adjacent context whose ownership is unverified. `--include-invalid`
+includes plausible blocks with invalid, missing or vendor-defined integrity.
+The JSON report retains every occurrence, source-file offsets and hashes.
+
+Default limits are 128 MiB per file and 1024 MiB total; adjust with
+`--max-file-mib` and `--max-total-mib`. Scan errors produce status 1 and are
+recorded in the report. No matches returns status 0. See
+[embedded SPD extraction](FIRMWARE.md) for compressed firmware, LPDDR signatures
+and the distinction between a firmware candidate and the active RAM profile.
+
 ## Graphical editor
 
 ```sh
@@ -36,11 +58,15 @@ python spd_editor.py module.bin
 | Registers / buffers | Named fields, legal encodings, locations and field notes |
 | HP SmartMemory | Registry matching, HPT edits and candidate computation |
 | Comparison | Byte differences between the current buffer and another image |
+| Hardware / programmer | Linux or USB bridge discovery, reads and reviewed EEPROM programming |
 
 Save and Save As write the current buffer through an atomic file replacement.
 Checksum/CRC repair is enabled by default and can be disabled in the editor.
 Save As is useful when retaining a text dump or an unmodified binary. Opening
 another image or closing the application prompts for unsaved edits.
+See the [GUI hardware workflow](GUI_HARDWARE.md) for target selection and
+programming. The [USB serial bridge](EXTERNAL_BRIDGE.md) uses the same GUI
+workflow with optional pySerial and compatible microcontroller firmware.
 
 ## Named edits
 

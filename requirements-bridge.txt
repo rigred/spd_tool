@@ -1,0 +1,2 @@
+# Optional dependency for the USB serial hardware interface.
+pyserial>=3.5,<4
