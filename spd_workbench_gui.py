@@ -48,7 +48,7 @@ class Preview:
         for off,before,after in hexdiff(target,data):
             names=[f['label'] for f in fields.values() if off in f['masks']]
             self.tree.insert('','end',values=(f'{off} / {off:02X}',', '.join(names) or 'Timing / integrity',f'{before:02X}',f'{after:02X}'))
-        self.note.set(f'{len(hexdiff(target,data))} changed bytes. Base integrity repaired; hardware compatibility and verified operation remain separate. '+report.get('note',''))
+        self.note.set(f'{"IDIOT OVERRIDE ENABLED — logical checks bypassed. " if report.get("idiot_override") else ""}{len(hexdiff(target,data))} changed bytes. Base integrity repaired; hardware compatibility and verified operation remain separate. '+report.get('note',''))
     def apply(self):
         self.editor.hardware.idle();doc=self.editor.require_document()
         if not self.proposal or digest(doc.spd.data)!=self.proposal[0]:raise ValueError('Preview is missing or stale; rebuild it for the current target')
@@ -256,9 +256,19 @@ class PerformancePanel:
         native=viewport(self.native_page);self.summary=tk.StringVar();ttk.Label(native,textvariable=self.summary,padding=10,wraplength=1000).pack(fill='x')
         self.form=ttk.LabelFrame(native,text='Generation-specific native timings (ns)',padding=8);self.form.pack(fill='x',padx=8)
         row=ttk.Frame(native);row.pack(fill='x');self.cas=tk.StringVar()
-        ttk.Label(row,text='Supported CAS list').pack(side='left',padx=8);ttk.Entry(row,textvariable=self.cas,width=40).pack(side='left')
+        ttk.Label(row,text='Supported CAS list').pack(side='left',padx=8);self.cas_entry=ttk.Entry(row,textvariable=self.cas,width=40);self.cas_entry.pack(side='left')
         button(row,'Reload target timings',self.reload,editor);button(row,'Preview native encoding',self.build_native,editor);button(row,'Analyze edited timings',self.analyze,editor)
+        generator=ttk.Frame(native);generator.pack(fill='x',padx=8)
+        self.native_rate=tk.StringVar(value='1600');self.native_unit=tk.StringVar(value='MT/s')
+        ttk.Label(generator,text='Generate from target speed').pack(side='left');ttk.Entry(generator,textvariable=self.native_rate,width=12).pack(side='left',padx=4)
+        ttk.Combobox(generator,textvariable=self.native_unit,values=('MT/s','MHz'),state='readonly',width=8).pack(side='left')
+        button(generator,'Generate native timing draft',self.generate_native,editor)
+        self.native_override=tk.BooleanVar();self.native_reason=tk.StringVar()
+        ttk.Checkbutton(native,text='Idiot override — allow inconsistent native timing combinations; encoding limits remain',variable=self.native_override).pack(anchor='w',padx=8)
+        override_row=ttk.Frame(native);override_row.pack(fill='x',padx=8);ttk.Label(override_row,text='Override reason / intent').pack(side='left');ttk.Entry(override_row,textvariable=self.native_reason,width=80).pack(side='left')
+        self.native_feedback=tk.StringVar();ttk.Label(native,textvariable=self.native_feedback,wraplength=1000,padding=8).pack(fill='x')
         self.preview=Preview(editor,native)
+
         self.epp_page=ttk.Frame(self.book);self.book.add(self.epp_page,text='DDR2 EPP')
         epp=viewport(self.epp_page);row=ttk.Frame(epp);row.pack(fill='x');self.epp_format=tk.StringVar(value='full');self.slot=tk.StringVar(value='0');self.optimal=tk.StringVar(value='0')
         for label,var,values in [('Format',self.epp_format,('full','abbreviated')),('Slot',self.slot,('0','1','2','3')),('Optimal',self.optimal,('0','1','2','3'))]:
@@ -274,6 +284,9 @@ class PerformancePanel:
             ttk.Label(form,text=key).grid(row=row,column=col*2,sticky='w');ttk.Entry(form,textvariable=var,width=15).grid(row=row,column=col*2+1,padx=8,pady=3)
         ttk.Label(epp,text='Drive codes: address/CS 0–3 = 1/1.25/1.5/2×; clock/data/DQS 0–3 = .75/1/1.25/1.5×. Delay codes 0–31 in 1/64 tCK; setup 0 = ½ tCK, 1 = 1 tCK. Published format scope: DDR2 UDIMM.',wraplength=1000,padding=8).pack(fill='x')
         row=ttk.Frame(epp);row.pack(fill='x');button(row,'Preview EPP encoding',self.build_epp,editor);button(row,'Analyze EPP candidate',self.analyze_epp,editor)
+        self.epp_override=tk.BooleanVar();self.epp_reason=tk.StringVar()
+        ttk.Checkbutton(epp,text='Idiot override — allow inconsistent EPP timing combinations; encoding limits remain',variable=self.epp_override).pack(anchor='w',padx=8)
+        override_row=ttk.Frame(epp);override_row.pack(fill='x',padx=8);ttk.Label(override_row,text='Override reason / intent').pack(side='left');ttk.Entry(override_row,textvariable=self.epp_reason,width=80).pack(side='left')
         self.epp_preview=Preview(editor,epp)
         self.xmp_page=ttk.Frame(self.book);self.book.add(self.xmp_page,text='XMP / evidence / timing-bin planner')
         from spd_xmp_gui import XMPDialog
@@ -282,6 +295,8 @@ class PerformancePanel:
         self.xmp_slot=tk.StringVar(value='1');ttk.Combobox(danger,textvariable=self.xmp_slot,values=('1','2'),state='readonly',width=6).pack(side='left')
         self.ack=tk.BooleanVar();ttk.Checkbutton(danger,text='I tested these settings on the target hardware and reviewed voltage requirements',variable=self.ack).pack(side='left')
         button(danger,'Preview native conversion',self.convert,editor)
+        for var in (*self.epp_vars.values(),self.epp_override,self.epp_reason,self.enabled,self.replace,self.epp_format,self.slot,self.optimal):var.trace_add('write',lambda *args:setattr(self.epp_preview,'proposal',None))
+        for var in (self.cas,self.native_override,self.native_reason):var.trace_add('write',lambda *args:self.native_changed())
         ttk.Label(native,text='Native fields cannot request arbitrary XMP voltage, CWL, command rate or controller behavior. Apply requires acknowledgment; Undo restores the prior image. Profile editing never programs physical hardware.',wraplength=1000,padding=8).pack(fill='x')
     def data(self):return self.editor.require_document().spd.data
     def refresh(self):
@@ -295,15 +310,59 @@ class PerformancePanel:
             self.xmp.rates.set(str(rate or 100))
         if self.fingerprint!=digest(data):self.reload()
         self.book.tab(self.epp_page,state='normal' if data[2]==8 else 'disabled')
+        self.xmp.live_validate()
     def reload(self):
-        data=self.data();self.fingerprint=digest(data);self.native_vars={}
+        data=self.data();self.fingerprint=digest(data);self.native_vars={};self.native_entries={};self.native_proposal=None
         for child in self.form.winfo_children():child.destroy()
         for i,(key,value) in enumerate(native_timings(data).items()):
             row,col=divmod(i,3);var=tk.StringVar(value=str(value));self.native_vars[key]=var
-            ttk.Label(self.form,text=key).grid(row=row,column=col*2,sticky='w');ttk.Entry(self.form,textvariable=var,width=17).grid(row=row,column=col*2+1,padx=6,pady=3)
+            ttk.Label(self.form,text=key).grid(row=row,column=col*2,sticky='w');entry=ttk.Entry(self.form,textvariable=var,width=17);entry.grid(row=row,column=col*2+1,padx=6,pady=3)
+            var.trace_add('write',lambda *args:self.native_changed())
+            self.native_entries[key]=entry
+        self.native_rate.set(str(SPD(data).decoded_data.get('max_data_rate_MTps') or 100))
         self.cas.set(','.join(str(c) for c in SPD(data).decoded_data.get('cas_latencies_supported',[])))
+        self.validate_native()
         self.summary.set(f'{SPD(data).mem_type_name}: semantic encoders preserve non-timing bytes and repair base integrity. Minimum timings round upward to their representable units. Changing the legacy CAS bitmap invalidates stale lower-CAS points.')
-    def build_native(self):self.preview.set(encode_native(self.data(),{k:v.get() for k,v in self.native_vars.items()},self.cas.get().split(',')),dict(operation='Native timing edit',classification='manually configured'))
+    def build_native(self):
+        if self.native_override.get() and not self.native_reason.get().strip():raise ValueError('Record a reason / intent for the idiot override')
+        self.preview.set(encode_native(self.data(),{k:v.get() for k,v in self.native_vars.items()},self.cas.get().split(','),self.native_override.get()),dict(operation='Native timing edit',classification='generated / manually refined' if getattr(self,'native_proposal',None) else 'manually configured',timing_proposal=getattr(self,'native_proposal',None),requested_timings={k:v.get() for k,v in self.native_vars.items()},idiot_override=self.native_override.get(),override_reason=self.native_reason.get(),diagnostics=self.validate_native()))
+
+    def native_changed(self):
+        self.preview.proposal=None;self.validate_native()
+
+    def validate_native(self):
+        if not self.editor.document:return []
+        issues=[]
+        for key,var in self.native_vars.items():
+            try:encode_native(self.data(),{key:var.get()},allow_inconsistent=True);style='TEntry'
+            except ValueError as exc:issues.append(key+': '+str(exc));style='Invalid.TEntry'
+            if key in self.native_entries:self.native_entries[key].configure(style=style)
+        self.cas_entry.configure(style='TEntry')
+        if not issues:
+            try:encode_native(self.data(),{k:v.get() for k,v in self.native_vars.items()},self.cas.get().split(','))
+            except ValueError as exc:
+                issues.append(str(exc));style='Warning.TEntry' if self.native_override.get() else 'Invalid.TEntry'
+                if 'CAS' in str(exc):self.cas_entry.configure(style=style)
+                for key in (('tCKmin','tAAmin') if 'CAS' in str(exc) else ('tRCmin','tRASmin','tRPmin')):
+                    if key in self.native_entries:self.native_entries[key].configure(style=style)
+        try:
+            period=float(self.native_vars['tCKmin'].get());factor=1000 if self.data()[2]==4 else 2000
+            clock=f'Draft: {1000/period:.3f} MHz / {factor/period:.3f} MT/s. '
+        except (ValueError,ZeroDivisionError,KeyError):clock=''
+        self.native_feedback.set(clock+(' | '.join(issues) if issues else 'Native field representations and implemented dependencies pass; hardware operation is unverified.'))
+        return issues
+
+    def generate_native(self):
+        from spd_timing_planner import plan_bins
+        from spd_xmp import number
+        factor=1 if self.data()[2]==4 else 2
+        rate=number(self.native_rate.get())*(factor if self.native_unit.get()=='MHz' else 1)
+        row=plan_bins(self.data(),[rate],voltage=self.xmp.voltage.get() or '1.5',evidence=self.xmp.evidence)[0]
+        if row['violations'] and not self.native_override.get():raise ValueError('; '.join(row['violations']))
+        for key,var in self.native_vars.items():
+            if key in row['timings_ns']:var.set(str(row['timings_ns'][key]))
+        self.cas.set(str(row['cycles']['tAAmin']));self.validate_native();self.native_proposal=row
+
     def analyze(self):
         config=configuration(self.data());config['label']='Edited native candidate';config['parameters'].update({k.removesuffix('min'):float(v.get()) for k,v in self.native_vars.items() if k!='tACmax'})
         config['parameters']['tCK']=float(self.native_vars['tCKmin'].get());config['parameters']['CL']=max(float(v) for v in self.cas.get().split(','))
@@ -325,8 +384,10 @@ class PerformancePanel:
     def epp_candidate(self):
         from spd_epp import encode_epp
         values={k:v.get() for k,v in self.epp_vars.items()};times={k:values.pop(k) for k in list(values) if k.startswith('t')}
-        return encode_epp(self.data(),int(self.slot.get()),dict(values,enabled=self.enabled.get(),timings_ns=times),self.epp_format.get(),self.replace.get(),int(self.optimal.get()))
-    def build_epp(self):self.epp_preview.set(self.epp_candidate(),dict(operation='EPP edit',format=self.epp_format.get(),slot=self.slot.get(),parameters={k:v.get() for k,v in self.epp_vars.items()}))
+        return encode_epp(self.data(),int(self.slot.get()),dict(values,enabled=self.enabled.get(),timings_ns=times),self.epp_format.get(),self.replace.get(),int(self.optimal.get()),self.epp_override.get())
+    def build_epp(self):
+        if self.epp_override.get() and not self.epp_reason.get().strip():raise ValueError('Record a reason / intent for the idiot override')
+        self.epp_preview.set(self.epp_candidate(),dict(operation='EPP edit',idiot_override=self.epp_override.get(),override_reason=self.epp_reason.get(),format=self.epp_format.get(),slot=self.slot.get(),parameters={k:v.get() for k,v in self.epp_vars.items()}))
     def duplicate(self):
         from spd_epp import duplicate_epp
         dest=simpledialog.askinteger('Duplicate EPP','Destination slot (0 based)',parent=self.editor.root,minvalue=0,maxvalue=3)

@@ -28,7 +28,7 @@ def native_timings(data):
     return {k:v for k,v in decoded['timings_ns'].items() if v is not None and (k.endswith('min') or k in ('tACmax',))}
 
 
-def encode_native(data,timings,cas=None):
+def encode_native(data,timings,cas=None,allow_inconsistent=False):
     spd=SPD(data);mem=data[2];out=bytearray(data)
     original=spd.decoded_data
     allowed=set(native_timings(data))
@@ -86,9 +86,9 @@ def encode_native(data,timings,cas=None):
             # Lower-CAS points are tied to the highest CAS. Invalidate stale points.
             if out[18]!=data[18]:out[23:27]=bytes(4)
     result=repair_integrity(out);decoded=SPD(result).decoded_data;actual=decoded['timings_ns']
-    if actual.get('tRCmin') is not None and actual.get('tRPmin') and actual.get('tRASmin') and actual['tRCmin']+1e-6<actual['tRPmin']+actual['tRASmin']:
+    if not allow_inconsistent and actual.get('tRCmin') is not None and actual.get('tRPmin') and actual.get('tRASmin') and actual['tRCmin']+1e-6<actual['tRPmin']+actual['tRASmin']:
         raise ValueError('Encoded tRC is below tRAS + tRP; include coherent dependent timings')
-    if mem==11 and not decoded.get('timings_clocks',{}).get('CL'):raise ValueError('Native CAS bitmap cannot satisfy tAA/tCK')
+    if not allow_inconsistent and mem==11 and not decoded.get('timings_clocks',{}).get('CL'):raise ValueError('Native CAS bitmap cannot satisfy tAA/tCK')
     return result
 
 

@@ -200,3 +200,55 @@ fields with explicit tested-hardware acknowledgment, dependency adjustment,
 CRC repair and a reversible preview. Voltage and several controller behaviors
 cannot be transferred to native fields. See [Engineering workbench](ENGINEERING_WORKBENCH.md)
 for these workflows and the timing model's assumptions.
+
+## Live feasibility and clock-based drafts
+
+Profile fields are validated as they are typed. Red entries cannot be encoded
+or conflict with the current timing combination; amber entries show quantization
+or deliberately overridden warnings. The diagnostic table lists affected fields
+and explains each result without requiring repeated preview-error dialogs.
+
+For example, at 0.833 ns tCK, a 9.113 ns tAA requires at least CL11. Selecting
+only CL6 and CL10 is inconsistent. The editor highlights CAS, tAA and tCK and
+shows the clock envelope for the currently selected CAS/tAA combination.
+
+That envelope combines the actual profile timebase/field capacity and CAS-time
+constraint. It is an **encoding/CAS envelope**, not an assertion that the chips,
+PCB or memory controller work throughout that range. MHz is the DRAM clock;
+DDR MT/s is twice that clock. Displayed rates use encoded, quantized periods.
+
+Choose a target in MHz or MT/s, choose **Current profile** or **SPD / loaded
+evidence**, then **Generate timing draft at this speed**. Current-profile mode
+preserves absolute timing minima, rounds them to cycles at the requested clock,
+selects a representable CAS, and accounts for actual encoding when satisfying
+tRC ≥ tRAS+tRP. It retains refresh as a maximum interval and preserves expert
+vendor fields. SPD mode uses the existing evidence-aware planner. Generation
+updates the editable form; it does not apply or program an image. Preview the
+result before applying it. Quantization may make the encoded rate slightly
+lower than the requested rate.
+
+Supplied datasheet voltage/rate/timing limits and failed-test records are shown
+as additional warnings. Malformed inputs, invalid timebases and numeric overflow
+remain errors. A generated draft remains untested, including when some anchor
+values came from user-reported passed tests.
+
+## Idiot override
+
+**Idiot override** explicitly permits logically inconsistent XMP timing
+combinations and bypassing supplied operating-limit warnings. Enter an override
+reason or intent, review the highlighted conflicts, preview, then apply. The
+confirmation identifies the override; its reason and diagnostics are stored in
+provenance and the operation audit. Changing the override after preview requires
+a new review, just like changing timing fields.
+
+This permits combinations such as a CAS bitmap that cannot satisfy tAA/tCK or
+tRC shorter than tRAS+tRP. It does not silently wrap overflowing integers, accept
+NaN or write a nonexistent CAS bit. Values still have to fit the selected SPD
+format. The byte editor remains available for deliberate raw encodings.
+
+The native and DDR2 EPP timing pages also have explicit logical-consistency
+overrides with recorded reasons. Native timing inputs flag encoding errors and
+dependency conflicts while editing. Native drafts can be generated directly
+from a chosen MHz or MT/s value through the common timing planner. The override
+does not waive the separate physical programmer's target, backup and read-back
+requirements, and does not establish successful operation.

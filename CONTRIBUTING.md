@@ -4,6 +4,10 @@
 
 | Module | Responsibility |
 | --- | --- |
+| `spd_catalog_maintenance.py` | Reviewed removal, dependency handling, collection trash and missing-reference cleanup |
+| `spd_containers.py` | Lossless TH20/RW decoding and bounded ZIP/optional 7z ingestion |
+| `spd_bundle.py` | Open SPD Bundle manifest, hash validation and export |
+| `spd_conversion.py` | Exact binary conversion and bulk collection import CLI |
 | `spd_library.py` | Image loading, memory-type dispatch and byte differences |
 | `legacy_decoder.py` | Shared SDR/DDR organization, timings and manufacturing |
 | `sdr_decoder.py`, `ddr_decoder.py` | Legacy generation entry points |

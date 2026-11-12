@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spd-tool:open-spd-bundle:manifest:1",
+  "title": "Open SPD Bundle v1 manifest",
+  "type": "object",
+  "required": [
+    "format",
+    "version",
+    "images"
+  ],
+  "properties": {
+    "format": {
+      "const": "open-spd-bundle"
+    },
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4094,
+      "items": {
+        "$ref": "#/$defs/image"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "format",
+        "name",
+        "length",
+        "sha256"
+      ],
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^sources/[^\\\\:]+$"
+        },
+        "decoded_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "decoded_length": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 65536
+        },
+        "details": {
+          "type": "object"
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": [
+        "file",
+        "length",
+        "sha256",
+        "memory_type"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "pattern": "^images/[0-9a-f]{64}\\.bin$"
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 65536
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "memory_type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "provenance": {
+              "type": "object",
+              "required": [
+                "generated",
+                "result_sha256"
+              ],
+              "properties": {
+                "generated": {
+                  "type": "boolean"
+                },
+                "result_sha256": {
+                  "$ref": "#/$defs/sha256"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

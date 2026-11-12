@@ -116,6 +116,8 @@ def main():
     subparsers = parser.add_subparsers(dest="cmd", required=True)
     from spd_firmware import add_parser as add_firmware_parser
     add_firmware_parser(subparsers)
+    from spd_conversion import add_parsers as add_conversion_parsers
+    add_conversion_parsers(subparsers)
 
     p_gui = subparsers.add_parser('gui', help='Open the offline Tk graphical SPD editor.')
     p_gui.add_argument('--spd', help='Optional SPD image to open.')

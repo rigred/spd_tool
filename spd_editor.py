@@ -169,6 +169,7 @@ class EditorDocument:
 
     def save(self, path, fix_integrity=True):
         """Atomic file replacement; failed writes leave document and destination intact."""
+        if Path(path).suffix.lower() in ('.thp','.rw','.spdz','.zip','.7z'):raise ValueError('Save a raw image as .bin/.spd; use Export open bundle for a ZIP container')
         data = repair_integrity(self.spd.data) if fix_integrity else self.spd.data
         destination = Path(path)
         temp_path = None
@@ -203,20 +204,25 @@ class SPDEditor:
         header = tk.Frame(root,background='#14283F',padx=20,pady=14)
         header.pack(fill='x')
         tk.Label(header,text='SPD TOOL',font=('DejaVu Sans',18,'bold'),foreground='white',background='#14283F').pack(side='left')
-        tk.Label(header,text='MODULE CONFIGURATION',font=('DejaVu Sans',10),foreground='#B5C8DC',background='#14283F').pack(side='left',padx=20)
+        self.mode_title=tk.StringVar(value='MODULE CONFIGURATION')
+        tk.Label(header,textvariable=self.mode_title,font=('DejaVu Sans',10),foreground='#B5C8DC',background='#14283F').pack(side='left',padx=20)
         self.document_name=tk.StringVar(value='No image loaded')
         tk.Label(header,textvariable=self.document_name,foreground='#DCE8F5',background='#14283F',anchor='e').pack(side='right')
-        toolbar = ttk.Frame(root, padding=(12,8))
+        modes=ttk.Frame(root,padding=(12,6));modes.pack(fill='x')
+        self.module_mode_button=ttk.Button(modes,text='Module workbench',command=lambda:self.show_module());self.module_mode_button.pack(side='left',padx=3)
+        self.library_mode_button=ttk.Button(modes,text='SPD library',command=lambda:self.show_library());self.library_mode_button.pack(side='left',padx=3)
+        self._last_module_page=None
+        toolbar = ttk.Frame(root, padding=(12,8));self.editor_toolbar=toolbar
         toolbar.pack(fill='x')
         for label, callback in [('Open...', self.open), ('Save', self.save), ('Save As...', self.save_as),
                                 ('Undo', self.undo), ('Redo', self.redo), ('Repair integrity', self.repair),
                                 ('Compare...', self.compare), ('Export JSON...', self.export)]:
             ttk.Button(toolbar, text=label, command=lambda f=callback: self.run(f)).pack(side='left', padx=2)
         self.fix_on_save = tk.BooleanVar(value=True)
-        ttk.Checkbutton(root, text='Repair checksum / CRC on save', variable=self.fix_on_save).pack(anchor='w', padx=12)
+        self.save_options=ttk.Checkbutton(root,text='Repair checksum / CRC on save',variable=self.fix_on_save);self.save_options.pack(anchor='w',padx=12)
         self.status = tk.StringVar(value='Open a binary or hex-text SPD image to begin.')
-        ttk.Label(root, textvariable=self.status, padding=8).pack(fill='x')
-        workspace=ttk.Frame(root);workspace.pack(fill='both',expand=True,padx=10,pady=5)
+        self.status_label=ttk.Label(root,textvariable=self.status,padding=8);self.status_label.pack(fill='x')
+        workspace=ttk.Frame(root);self.workspace=workspace;workspace.pack(fill='both',expand=True,padx=10,pady=5)
         self.navigation=tk.Listbox(workspace,width=25,background='#14283F',foreground='white',selectbackground='#24669D',font=('DejaVu Sans',10),borderwidth=0,highlightthickness=0,exportselection=False)
         self.navigation.pack(side='left',fill='y',padx=(0,8))
         style=ttk.Style(root);style.layout('Workbench.TNotebook.Tab',[])
@@ -247,6 +253,7 @@ class SPDEditor:
         for label, cb in [('Edit selected byte...', self.edit_selected), ('Write hex range...', self.edit_range),
                           ('Part number...', self.edit_part), ('Serial number...', self.edit_serial), ('XMP / timing planner...', self.edit_xmp)]:
             ttk.Button(edits, text=label, command=lambda f=cb: self.run(f)).pack(side='left', padx=3)
+        ttk.Button(edits,text='Export open bundle…',command=lambda:self.run(self.export_bundle)).pack(side='left',padx=3)
         module_tab = ttk.Frame(book)
         self.module_tab=module_tab
         book.add(module_tab, text='SPD field editor')
@@ -309,12 +316,16 @@ class SPDEditor:
         self.performance=PerformancePanel(self,self.performance_tab)
         self.history_tab=ttk.Frame(book);book.add(self.history_tab,text='Operation history');self.history=HistoryPanel(self,self.history_tab)
         for index,tab in enumerate((self.overview_tab,self.module_tab,raw,self.catalog_tab,self.factory_tab,self.performance_tab,self.timing_tab,self.diff,self.hardware_tab,self.history_tab,hp_tab,decoded)):book.insert(index,tab)
-        for tab in book.tabs():self.navigation.insert('end','OEM / factory' if tab==str(self.factory_tab) else book.tab(tab,'text'))
+        self._nav_tabs=[tab for tab in book.tabs() if tab!=str(self.catalog_tab)]
+        for tab in self._nav_tabs:self.navigation.insert('end','OEM / factory' if tab==str(self.factory_tab) else book.tab(tab,'text'))
         self.navigation.selection_set(0)
-        self.navigation.bind('<<ListboxSelect>>',lambda event:book.select(book.tabs()[self.navigation.curselection()[0]]) if self.navigation.curselection() else None)
+        self.navigation.bind('<<ListboxSelect>>',lambda event:book.select(self._nav_tabs[self.navigation.curselection()[0]]) if self.navigation.curselection() else None)
         def sync_navigation(event):
             if book.select():
-                index=book.index(book.select());self.navigation.selection_clear(0,'end');self.navigation.selection_set(index)
+                library=book.select()==str(self.catalog_tab);self._set_library_mode(library)
+                self.navigation.selection_clear(0,'end')
+                if not library:
+                    self._last_module_page=book.select();self.navigation.selection_set(self._nav_tabs.index(book.select()))
         book.bind('<<NotebookTabChanged>>',sync_navigation)
         self._settings_job=self.root.after_idle(self.catalog.restore_settings)
         def cancel_deferred(event):
@@ -328,6 +339,24 @@ class SPDEditor:
                             ('<Control-z>', self.undo), ('<Control-y>', self.redo)]:
             root.bind(key, lambda event, f=action: self.run(f))
 
+    def _set_library_mode(self,library):
+        self.mode_title.set('SPD LIBRARY' if library else 'MODULE CONFIGURATION')
+        if library:
+            for widget in (self.editor_toolbar,self.save_options,self.status_label,self.navigation):widget.pack_forget()
+            self.library_mode_button.configure(style='ActiveMode.TButton');self.module_mode_button.configure(style='TButton')
+        else:
+            self.editor_toolbar.pack(fill='x',before=self.workspace)
+            self.save_options.pack(anchor='w',padx=12,before=self.workspace)
+            self.status_label.pack(fill='x',before=self.workspace)
+            self.navigation.pack(side='left',fill='y',padx=(0,8),before=self.book)
+            self.module_mode_button.configure(style='ActiveMode.TButton');self.library_mode_button.configure(style='TButton')
+
+    def show_library(self):
+        self.book.select(self.catalog_tab);self._set_library_mode(True)
+
+    def show_module(self):
+        self.book.select(self._last_module_page or self.overview_tab);self._set_library_mode(False)
+
     def _configure_style(self):
         from tkinter import ttk
         style=ttk.Style(self.root)
@@ -336,6 +365,8 @@ class SPDEditor:
         style.configure('TFrame',background='#EEF2F7')
         style.configure('TLabel',background='#EEF2F7',foreground='#22364D')
         style.configure('TButton',padding=(10,6))
+        style.configure('ActiveMode.TButton',background='#1C5F9C',foreground='white',font=('DejaVu Sans',10,'bold'))
+        style.map('ActiveMode.TButton',background=[('active','#246DAA')],foreground=[('active','white')])
         style.configure('TCheckbutton',background='#EEF2F7')
         style.configure('TNotebook',background='#EEF2F7',borderwidth=0)
         style.configure('TNotebook.Tab',padding=(14,8))
@@ -502,16 +533,19 @@ class SPDEditor:
     def open_path(self, path):
         spd = load_spd_file(path)
         self.document = EditorDocument(spd.data, path)
+        self.document.source_import=getattr(spd,'source_import',None)
+        if self.document.source_import and (self.document.source_import['source']['format'] in ('thaiphoon-th20','rw-everything','open-spd-bundle') or Path(path).suffix.lower() in ('.zip','.spdz','.7z')):self.fix_on_save.set(False)
         self.hardware.plan = None
         self.hardware.end.set(str(len(spd.data)-1))
         self.set_text(self.diff, '')
         self.refresh()
+        if self.book.select()==str(self.catalog_tab):self.show_module()
 
     def open(self):
         from tkinter import filedialog
         if not self.confirm_discard():
             return
-        path = filedialog.askopenfilename(parent=self.root, filetypes=[('SPD images', '*.bin *.spd *.txt *.hex'), ('All files', '*')])
+        path = filedialog.askopenfilename(parent=self.root, filetypes=[('SPD images', '*.bin *.spd *.thp *.rw *.txt *.hex *.spdz *.zip'), ('All files', '*')])
         if path:
             self.open_path(path)
 
@@ -736,7 +770,7 @@ class SPDEditor:
 
     def save(self):
         doc = self.require_document()
-        if not doc.path:
+        if not doc.path or Path(doc.path).suffix.lower() in ('.thp','.rw','.spdz','.zip','.7z'):
             return self.save_as()
         doc.save(doc.path, self.fix_on_save.get())
         self.refresh()
@@ -764,6 +798,17 @@ class SPDEditor:
         self.set_text(self.diff, f'Current image vs {path}\n{len(diffs)} differing bytes\n\nOffset   Current   Comparison\n' +
                       '\n'.join(f'{offset:04X}     {fmt(a)}        {fmt(b)}' for offset, a, b in diffs))
         self.book.select(self.diff)
+
+    def export_bundle(self):
+        from tkinter import filedialog
+        from spd_bundle import write_bundle
+        doc=self.require_document();path=filedialog.asksaveasfilename(parent=self.root,title='Export open SPD bundle (exact current bytes)',defaultextension='.spdz',filetypes=[('Open SPD bundle','*.spdz'),('ZIP','*.zip')])
+        if not path:return
+        record=dict(data=doc.spd.data,metadata=dict(spd_integrity=doc.spd.decoded_data['crc_info']))
+        source=getattr(doc,'source_import',None)
+        if source:record.update(sources=source.get('sources',[dict(source=source['source'],original=source.get('original'))]))
+        if doc.vendor_profile_application:record['metadata']['provenance']=doc.vendor_profile_application
+        write_bundle([record],path)
 
     def export(self):
         from tkinter import filedialog

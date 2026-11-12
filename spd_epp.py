@@ -42,7 +42,7 @@ def decode_epp(data):
     return dict(format='full' if full else 'abbreviated',optimal=data[103]&3,profiles=profiles)
 
 
-def encode_epp(data,index,profile,format='full',replace=False,optimal=None):
+def encode_epp(data,index,profile,format='full',replace=False,optimal=None,allow_inconsistent=False):
     require(data)
     if data[20]!=2:raise ValueError('This published EPP format is scoped to DDR2 unbuffered DIMMs (UDIMM)')
     if format not in ('full','abbreviated'):raise ValueError('Unknown EPP format')
@@ -59,7 +59,7 @@ def encode_epp(data,index,profile,format='full',replace=False,optimal=None):
     t=profile['timings_ns'];out[timing]=lookup_encode(t['tCKmin'],epp_cycle)
     out[timing+1]=1<<integer(profile['cas'],2,6,'CAS')
     out[timing+2]=count(t['tRCDmin'],'.25');out[timing+3]=count(t['tRPmin'],'.25');out[timing+4]=count(t['tRASmin'],1)
-    if full and number(t['tRCmin']) < number(t['tRASmin'])+number(t['tRPmin']):raise ValueError('tRC must be at least tRAS + tRP')
+    if not allow_inconsistent and full and number(t['tRCmin']) < number(t['tRASmin'])+number(t['tRPmin']):raise ValueError('tRC must be at least tRAS + tRP')
     if full:
         out[base+10]=count(t['tWRmin'],'.25');out[base+11]=count(t['tRCmin'],1)
         for key,off,shift,bits in [('address_drive',1,0,2),('cs_drive',1,2,2),('clock_drive',1,4,2),('data_drive',1,6,2),('dqs_drive',2,0,2),

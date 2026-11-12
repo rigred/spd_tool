@@ -29,6 +29,7 @@ decoder; DDR4/DDR5 editing, FBDIMM and Rambus formats are outside its scope.
   `python3-tk` if it is not included with Python.
 - Linux I2C device access for `spd_smbus.py`.
 - Optional `pyserial` for the external USB bridge (`requirements-bridge.txt`).
+- Optional `py7zr` for 7z collection import (`requirements-archives.txt`).
 
 Run commands from the repository root. The examples use `python`; substitute
 `python3` where required by the local installation.
@@ -52,7 +53,8 @@ python spd_tool.py dump --spd module.bin --json module.json
 python spd_tool.py diff --file-a original.bin --file-b modified.bin --show-maps
 ```
 
-The loader accepts binary images and hex-text dumps of 128-256 bytes. Image
+The loader accepts binary images, hex-text dumps, Thaiphoon TH20 dumps and
+single-image open SPD bundles. Supported editable images contain 128-256 bytes. Image
 length is preserved. See [Image formats](docs/FORMATS.md) for text syntax,
 partial images and checksum coverage.
 
@@ -102,8 +104,11 @@ read-back verification. See the [hardware GUI guide](docs/GUI_HARDWARE.md) and
 
 ## SPD library
 
-The **SPD library** page imports files or folders into a portable SQLite
-collection with readable manufacturer/model paths and hash deduplication.
+The top-level **SPD library** area imports files or folders into a portable SQLite
+collection with readable manufacturer/model paths and hash deduplication. Its
+expandable file list has independent scrollbars and collapsible filters/details.
+Reviewed removal uses restorable collection trash; missing external source
+references can be cleaned without deleting managed snapshots.
 It includes HP family evidence analysis, reusable multi-donor merge recipes, optional
 startup loading, source refresh and offline public-submission bundles.
 See [Library management](docs/LIBRARY.md) and
@@ -126,6 +131,25 @@ remain untested proposals. See [Engineering workbench](docs/ENGINEERING_WORKBENC
 
 The diagram above uses a synthetic SPD fixture; it illustrates command constraints,
 not a measured hardware result.
+
+## THP conversion and open bundles
+
+TH20 imports decode directly into normal binary images in the library; original
+wrappers are retained separately. Bulk file/folder import also accepts ZIP archives
+and optional 7z collections. Conversion preserves the original SPD checksum/CRC,
+including invalid values.
+
+```sh
+python spd_tool.py convert --source module.thp --out module.bin
+python spd_tool.py library-import --collection ./collection --source SPDs.7z
+python spd_tool.py convert --source module.thp --out module.spdz
+```
+
+[Open SPD Bundle v1](docs/OPEN_SPD_BUNDLE.md) uses ordinary ZIP, a UTF-8 JSON
+manifest, plain binary images and SHA-256 checksums. It is a documented project
+interchange format, with no obfuscation or proprietary runtime. See
+[THP import and format details](docs/THP_IMPORT.md) for supported layouts and
+`requirements-archives.txt` for optional 7z support.
 
 ## Documentation
 

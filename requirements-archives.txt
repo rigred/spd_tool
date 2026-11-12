@@ -1,0 +1,2 @@
+# Optional: only for importing .7z collections. THP/ZIP/spdz use the standard library.
+py7zr>=1.0,<2

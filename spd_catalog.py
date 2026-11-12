@@ -14,6 +14,19 @@ from spd_integrity import integrity_info
 from hp_smartmemory_ident import load_registry, learn_family_from_two, compute_hpt_solutions
 
 
+OEM_FIELDS=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','dram_chip_part_number','pcb_revision','register_part_number','notes')
+
+def clean_oem_details(details):
+    if not isinstance(details,dict) or set(details)-set(OEM_FIELDS):raise ValueError('Unknown OEM detail field')
+    cleaned={}
+    for key,value in details.items():
+        if not isinstance(value,str):raise ValueError('OEM details must be text')
+        value=value.strip();limit=2000 if key=='notes' else 128
+        if len(value)>limit or any(ord(c)<32 and (key!='notes' or c not in '\n\t') for c in value):raise ValueError('OEM detail is too long or contains control characters')
+        if value:cleaned[key]=value
+    return cleaned
+
+
 def safe_name(value):
     value = re.sub(r'[^A-Za-z0-9._ -]', '_', str(value)).strip(' .')[:32]
     if not value or value.split('.')[0].upper() in {'CON','PRN','AUX','NUL',*(f'COM{i}' for i in range(10)),*(f'LPT{i}' for i in range(10))}:
@@ -74,9 +87,11 @@ def family_scope(row,data):
 class Catalog:
     def __init__(self, root):
         self.root = Path(root).resolve()
+        self.migration_warnings=[]
         self.root.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS merge_recipes (id TEXT PRIMARY KEY, name TEXT NOT NULL, record TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS imports (image_sha TEXT NOT NULL, source_sha TEXT NOT NULL, name TEXT NOT NULL, record TEXT NOT NULL, UNIQUE(image_sha,source_sha,name))')
             db.execute('CREATE TABLE IF NOT EXISTS images (sha TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, metadata TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS vendor_profiles (id TEXT PRIMARY KEY, record TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS generated_images (sha TEXT PRIMARY KEY, provenance TEXT NOT NULL)')
@@ -88,7 +103,9 @@ class Catalog:
             for row in db.execute('SELECT sha,metadata FROM images').fetchall():
                 old = json.loads(row['metadata'])
                 if old.get('metadata_version') != 3:
-                    old.update(describe(self.data(row['sha'])))
+                    try:old.update(describe(self.data(row['sha'])))
+                    except (ValueError,OSError,NotImplementedError) as exc:
+                        self.migration_warnings.append(dict(sha256=row['sha'],error=str(exc)));continue
                     db.execute('UPDATE images SET metadata=? WHERE sha=?',(json.dumps(old),row['sha']))
 
 
@@ -123,17 +140,88 @@ class Catalog:
             db.execute('INSERT OR IGNORE INTO sources VALUES (?,?)',(sha,str(source)))
         return metadata
 
+    def retain_import(self,image_sha,record):
+        from spd_containers import sha256,exclusive_output
+        metadata=dict(record.get('metadata',{}))
+        items=record.get('sources') or [dict(source=record['source'],original=record.get('original'))]
+        for item in items:
+            source=dict(item['source']);original=item.get('original');relative=None
+            if original is not None:
+                digest=sha256(original)
+                if source.get('sha256')!=digest:raise ValueError('Imported original-source hash mismatch')
+                extension={'thaiphoon-th20':'.thp','rw-everything':'.rw','hex-text':'.txt'}.get(source.get('format'),'.dat')
+                relative=Path('originals')/(digest+extension);destination=self.root/relative
+                if self.root not in destination.resolve().parents:raise ValueError('Original source path escapes collection')
+                destination.parent.mkdir(exist_ok=True)
+                try:
+                    exclusive_output(destination,original)
+                except FileExistsError:
+                    if destination.stat().st_size!=len(original) or destination.read_bytes()!=original:raise ValueError('Stored original source failed hash verification')
+            report=dict(source=source,original_path=relative.as_posix() if relative else None,metadata=metadata)
+            identity=source.get('name','')+'#'+source.get('archive_sha256','')+'#'+source.get('member','')+'#'+hashlib.sha256(json.dumps(metadata,sort_keys=True).encode()).hexdigest()
+            with self.connect() as db:db.execute('INSERT OR IGNORE INTO imports VALUES (?,?,?,?)',(image_sha,source.get('sha256',image_sha),identity,json.dumps(report)))
+        oem=metadata.get('oem')
+        if isinstance(oem,dict) and not self.oem_details(image_sha):
+            allowed=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','dram_chip_part_number','pcb_revision','register_part_number','notes')
+            imported=self.set_oem_details(image_sha,{k:v for k,v in oem.items() if k in allowed})
+            if imported:
+                imported['source']='imported bundle annotations (unverified)'
+                with self.connect() as db:db.execute('UPDATE annotations SET details=? WHERE sha=?',(json.dumps(imported),image_sha))
+        provenance=metadata.get('provenance')
+        if isinstance(provenance,dict) and provenance.get('generated'):
+            self.mark_profile_generated(image_sha,provenance)
+
+    def import_sources(self,sha):
+        self.data(sha)
+        with self.connect() as db:return [json.loads(row['record']) for row in db.execute('SELECT record FROM imports WHERE image_sha=? ORDER BY source_sha,name',(sha,))]
+
     def import_files(self, paths):
-        results, errors = [], []
+        from spd_containers import read_inputs
+        results,errors=[],[]
         for path in paths:
             try:
-                path = Path(path)
-                if path.is_symlink() or path.stat().st_size > 1024*1024:
-                    raise ValueError('Symbolic link or file larger than 1 MiB')
-                results.append(self.add(load_spd_file(path).data, str(path)))
-            except (ValueError,OSError,NotImplementedError) as exc:
-                errors.append(dict(path=str(path),error=str(exc)))
-        return results, errors
+                records,problems=read_inputs(path);errors.extend(problems)
+                if not records and not problems:raise ValueError('No SPD images in input')
+            except (ValueError,OSError,NotImplementedError,ImportError) as exc:
+                errors.append(dict(path=str(path),error=str(exc)));continue
+            for record in records:
+                label=str(path)+('#'+record['source']['member'] if record['source'].get('member') else '')
+                try:
+                    metadata=record.get('metadata',{})
+                    if metadata.get('oem') is not None:
+                        if not isinstance(metadata['oem'],dict):raise ValueError('OEM metadata must be an object')
+                        clean_oem_details({k:v for k,v in metadata['oem'].items() if k in OEM_FIELDS})
+                    provenance=metadata.get('provenance')
+                    if provenance is not None and (not isinstance(provenance,dict) or not isinstance(provenance.get('generated'),bool) or provenance.get('result_sha256')!=hashlib.sha256(record['data']).hexdigest()):raise ValueError('Imported provenance does not match image')
+                    row=self.add(record['data'],str(Path(path).resolve()));self.retain_import(row['sha256'],record)
+                    results.append(dict(row,import_format=record['source']['format'],source=label))
+                except (ValueError,OSError,NotImplementedError) as exc:errors.append(dict(path=label,error=str(exc)))
+        return results,errors
+
+    def export_bundle(self,hashes,destination):
+        from spd_bundle import write_bundle
+        records=[];rows={r['sha256']:r for r in self.rows()}
+        for sha in sorted(set(hashes)):
+            data=self.data(sha);row=rows[sha];sources=[]
+            observations=[]
+            for report in self.import_sources(sha):
+                incoming=report.get('metadata',{})
+                extra={k:v for k,v in incoming.items() if k not in ('manufacturer','part_number','serial','spd_integrity','oem','provenance','imported_metadata')}
+                candidates=([extra] if extra else [])+(incoming.get('imported_metadata',[]) if isinstance(incoming.get('imported_metadata'),list) else [])
+                for extra in candidates:
+                    if extra not in observations:observations.append(extra)
+                original=None
+                if report['original_path']:
+                    path=(self.root/report['original_path']).resolve()
+                    if self.root not in path.parents:raise ValueError('Original source path escapes collection')
+                    if path.stat().st_size>1024*1024:raise ValueError('Original source exceeds 1 MiB')
+                    original=path.read_bytes()
+                sources.append(dict(source=report['source'],original=original))
+            metadata=dict(manufacturer=row['manufacturer'],part_number=row['part'],serial=row['serial'],spd_integrity=integrity_info(data),oem=self.oem_details(sha))
+            if observations:metadata['imported_metadata']=observations
+            if row.get('vendor_profile_application'):metadata['provenance']=row['vendor_profile_application']
+            records.append(dict(data=data,sources=sources,metadata=metadata))
+        return write_bundle(records,destination)
 
     def rows(self, search='', filters=None, year_from=None, year_to=None, sort='Model'):
         if year_from is not None and year_to is not None and int(year_from)>int(year_to):
@@ -188,15 +276,7 @@ class Catalog:
 
     def set_oem_details(self, sha, details):
         self.data(sha)  # Only annotate a verified collection entry.
-        allowed=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','dram_chip_part_number','pcb_revision','register_part_number','notes')
-        if set(details)-set(allowed):raise ValueError('Unknown OEM detail field')
-        cleaned={}
-        for key,value in details.items():
-            if not isinstance(value,str):raise ValueError('OEM details must be text')
-            value=value.strip()
-            limit=2000 if key=='notes' else 128
-            if len(value)>limit or any(ord(c)<32 and (key!='notes' or c not in '\n\t') for c in value):raise ValueError('OEM detail is too long or contains control characters')
-            if value:cleaned[key]=value
+        cleaned=clean_oem_details(details)
         if cleaned:
             cleaned.update(source='user-entered sticker metadata',updated_at=datetime.now(timezone.utc).isoformat())
         with self.connect() as db:
@@ -436,6 +516,34 @@ class Catalog:
 
     def recipes(self):
         with self.connect() as db:return [dict(id=r['id'],name=r['name'],bundle=json.loads(r['record'])) for r in db.execute('SELECT * FROM merge_recipes ORDER BY name')]
+
+    def removal_plan(self,hashes):
+        from spd_catalog_maintenance import removal_plan
+        return removal_plan(self,hashes)
+
+    def remove_images(self,plan,include_dependents=False):
+        from spd_catalog_maintenance import remove_images
+        return remove_images(self,plan,include_dependents)
+
+    def missing_references(self):
+        from spd_catalog_maintenance import missing_references
+        return missing_references(self)
+
+    def cleanup_references(self,review):
+        from spd_catalog_maintenance import cleanup_references
+        return cleanup_references(self,review)
+
+    def trash_entries(self):
+        from spd_catalog_maintenance import trash_entries
+        return trash_entries(self)
+
+    def restore_trash(self,identifier):
+        from spd_catalog_maintenance import restore_trash
+        return restore_trash(self,identifier)
+
+    def empty_trash(self,identifiers):
+        from spd_catalog_maintenance import empty_trash
+        return empty_trash(self,identifiers)
 
     def refresh_sources(self):
         # Original source paths are observations. Changed files become new immutable images.

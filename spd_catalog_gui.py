@@ -10,69 +10,134 @@ class CatalogPanel:
         import tkinter as tk
         from tkinter import ttk
         from tkinter.scrolledtext import ScrolledText
-        self.editor, self.root, self.catalog = editor, editor.root, None
-        viewport=tk.Canvas(parent,highlightthickness=0,background='#EEF2F7')
-        outer=ttk.Scrollbar(parent,orient='vertical',command=viewport.yview)
-        outer.pack(side='right',fill='y');viewport.configure(yscrollcommand=outer.set);viewport.pack(fill='both',expand=True)
-        content=ttk.Frame(viewport);window=viewport.create_window(0,0,window=content,anchor='nw')
-        content.bind('<Configure>',lambda event:viewport.configure(scrollregion=viewport.bbox('all')))
-        viewport.bind('<Configure>',lambda event:viewport.itemconfigure(window,width=max(990,event.width),height=max(680,event.height)))
-        parent=content
-        self.location = tk.StringVar(value='Choose a collection folder to open or create its database.')
-        self.search = tk.StringVar()
-        top=ttk.Frame(parent,padding=8); top.pack(fill='x')
-        for label,callback in [('Open / create collection…',self.choose),('Add SPD files…',self.import_files),('Import folder…',self.import_folder),('Add editor image',self.add_editor),('Editor OEM details…',lambda:self.edit_oem(True))]:
+        self.editor,self.root,self.catalog=editor,editor.root,None
+        self.display_rows={}
+        self.location=tk.StringVar(value='Choose a collection folder to open or create its database.');self.search=tk.StringVar()
+        top=ttk.Frame(parent,padding=8);top.pack(fill='x')
+        for label,callback in [('Open / create collection…',self.choose),('Add SPD files / archives…',self.import_files),('Import folder…',self.import_folder),('Add editor image',self.add_editor),('Editor OEM details…',lambda:self.edit_oem(True))]:
             ttk.Button(top,text=label,command=lambda cb=callback:editor.run(cb)).pack(side='left',padx=3)
-        ttk.Label(parent,textvariable=self.location,padding=8).pack(fill='x')
+        ttk.Label(parent,textvariable=self.location,padding=(10,2)).pack(fill='x')
         preferences=ttk.Frame(parent,padding=6);preferences.pack(fill='x')
         self.autoload=tk.BooleanVar(value=False)
         ttk.Checkbutton(preferences,text='Load this collection at startup',variable=self.autoload).pack(side='left')
-        ttk.Button(preferences,text='Save catalog preferences',command=lambda:editor.run(self.save_settings)).pack(side='left',padx=6)
+        ttk.Button(preferences,text='Save preferences',command=lambda:editor.run(self.save_settings)).pack(side='left',padx=6)
         ttk.Button(preferences,text='Refresh source files / index',command=lambda:editor.run(self.refresh_sources)).pack(side='left',padx=6)
-
-        search=ttk.Frame(parent,padding=8); search.pack(fill='x')
-        ttk.Label(search,text='Search manufacturer, model, serial or hash:').pack(side='left')
-        ttk.Entry(search,textvariable=self.search,width=45).pack(side='left',padx=8)
+        search=ttk.Frame(parent,padding=8);search.pack(fill='x');self.search_bar=search
+        ttk.Label(search,text='Search').pack(side='left')
+        ttk.Entry(search,textvariable=self.search,width=35).pack(side='left',padx=6,fill='x',expand=True)
         self.search.trace_add('write',lambda *args:self.refresh())
-        self.filters={};self.filter_boxes={}
-        facets=ttk.LabelFrame(parent,text='Collection filters',padding=6);facets.pack(fill='x',padx=8)
-        fields=[('oem_name','OEM'),('manufacturer','Vendor'),('dram_manufacturer','DRAM vendor'),('memory','Memory'),('module_type','Module type'),
-                ('capacity_mib','Capacity MiB'),('data_rate_MTps','Speed MT/s'),('ranks','Ranks'),('ecc','ECC'),
-                ('integrity','Integrity'),('hpt_present','HPT tag'),('length','Bytes'),('manufacture_year','Mfg year')]
+        self.sort=tk.StringVar(value='Model');ttk.Label(search,text='Sort').pack(side='left')
+        box=ttk.Combobox(search,textvariable=self.sort,state='readonly',width=13,values=('Model','Vendor','Date oldest','Date newest','Capacity','Speed','Serial'));box.pack(side='left',padx=4);box.bind('<<ComboboxSelected>>',lambda event:self.refresh())
+        self.show_filters=tk.BooleanVar(value=False);self.show_details=tk.BooleanVar(value=False)
+        ttk.Checkbutton(search,text='Filters',variable=self.show_filters,command=self.toggle_filters).pack(side='left',padx=4)
+        ttk.Checkbutton(search,text='Details / log',variable=self.show_details,command=self.toggle_details).pack(side='left',padx=4)
+        self.count=tk.StringVar();ttk.Label(search,textvariable=self.count).pack(side='right',padx=6)
+        self.filters_container=ttk.Frame(parent);self.filters={};self.filter_boxes={}
+        facets=ttk.LabelFrame(self.filters_container,text='Collection filters',padding=6);facets.pack(fill='x',padx=8)
+        fields=[('oem_name','OEM'),('manufacturer','Vendor'),('dram_manufacturer','DRAM vendor'),('memory','Memory'),('module_type','Module type'),('capacity_mib','Capacity MiB'),('data_rate_MTps','Speed MT/s'),('ranks','Ranks'),('ecc','ECC'),('integrity','Integrity'),('hpt_present','HPT tag'),('length','Bytes'),('manufacture_year','Mfg year')]
         for i,(key,title) in enumerate(fields):
             var=tk.StringVar(value='All');self.filters[key]=var
             frame=ttk.Frame(facets);frame.grid(row=i//4,column=i%4,sticky='ew',padx=3,pady=2)
-            ttk.Label(frame,text=title,width=11).pack(side='left')
-            box=ttk.Combobox(frame,textvariable=var,values=('All',),state='readonly',width=13);box.pack(side='left')
+            ttk.Label(frame,text=title,width=11).pack(side='left');box=ttk.Combobox(frame,textvariable=var,values=('All',),state='readonly',width=13);box.pack(side='left')
             self.filter_boxes[key]=box;box.bind('<<ComboboxSelected>>',lambda event:self.refresh())
-        dates=ttk.Frame(parent,padding=6);dates.pack(fill='x')
-        self.year_from=tk.StringVar(value='Any');self.year_to=tk.StringVar(value='Any');self.sort=tk.StringVar(value='Model')
-        self.year_boxes=[]
+        dates=ttk.Frame(self.filters_container,padding=6);dates.pack(fill='x');self.year_from=tk.StringVar(value='Any');self.year_to=tk.StringVar(value='Any');self.year_boxes=[]
         for title,var in [('Manufactured from year',self.year_from),('to year',self.year_to)]:
-            ttk.Label(dates,text=title).pack(side='left',padx=3)
-            box=ttk.Combobox(dates,textvariable=var,values=('Any',),state='readonly',width=8);box.pack(side='left')
-            box.bind('<<ComboboxSelected>>',lambda event:self.refresh());self.year_boxes.append(box)
-        ttk.Label(dates,text='Sort').pack(side='left',padx=8)
-        sort=ttk.Combobox(dates,textvariable=self.sort,state='readonly',width=13,values=('Model','Vendor','Date oldest','Date newest','Capacity','Speed','Serial'))
-        sort.pack(side='left');sort.bind('<<ComboboxSelected>>',lambda event:self.refresh())
+            ttk.Label(dates,text=title).pack(side='left',padx=3);box=ttk.Combobox(dates,textvariable=var,values=('Any',),state='readonly',width=8);box.pack(side='left');box.bind('<<ComboboxSelected>>',lambda event:self.refresh());self.year_boxes.append(box)
         ttk.Button(dates,text='Clear filters',command=self.clear_filters).pack(side='left',padx=8)
-        mining=ttk.Frame(parent,padding=4);mining.pack(fill='x')
-        ttk.Button(mining,text='Mine HPT families…',command=lambda:editor.run(self.mine)).pack(side='left',padx=4)
-        ttk.Button(mining,text='Export saved families…',command=lambda:editor.run(self.export_families)).pack(side='left',padx=4)
-        ttk.Button(mining,text='Vendor data / profiles…',command=lambda:editor.run(self.vendor_dialog)).pack(side='left',padx=4)
-        self.count=tk.StringVar();ttk.Label(mining,textvariable=self.count,padding=4).pack(side='right')
-        table_frame=ttk.Frame(parent);table_frame.pack(fill='x',padx=8)
-        self.table=ttk.Treeview(table_frame,columns=('memory','manufacturer','part','oem_part_number','serial','integrity'),show='headings',selectmode='extended',height=4)
-        for key,title,width in [('memory','Type',70),('manufacturer','Manufacturer',250),('part','Model',210),('oem_part_number','OEM part / HP family',190),('serial','Serial',130),('integrity','Integrity',100)]:
-            self.table.heading(key,text=title); self.table.column(key,width=width)
-        scroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.table.yview)
-        self.table.configure(yscrollcommand=scroll.set)
-        scroll.pack(side='right',fill='y'); self.table.pack(fill='both',expand=True)
-        buttons=ttk.Frame(parent,padding=8); buttons.pack(fill='x')
-        for label,callback in [('OEM sticker details…',self.edit_oem),('Open selected in editor',self.open_selected),('Analyze HPT family',self.analyze),('Compute HPT for editor serial',lambda:self.analyze(True)),('Prepare public submission…',self.submission)]:
-            ttk.Button(buttons,text=label,command=lambda cb=callback:editor.run(cb)).pack(side='left',padx=3)
-        self.details=ScrolledText(parent,height=6,wrap='word',font='TkFixedFont'); self.details.pack(fill='both',expand=True,padx=8,pady=8)
-        editor.set_text(self.details,'Imports preserve source files and deduplicate by SHA-256.\nPublic submission exports a reviewable bundle; no public service is configured and no data is uploaded.')
+        actions=ttk.Frame(parent,padding=6);actions.pack(fill='x')
+        for title,items in [('Module actions',[('Open selected in editor',self.open_selected),('OEM sticker details…',self.edit_oem),('Analyze HPT family',self.analyze),('Compute HPT for editor serial',lambda:self.analyze(True))]),('HP tools',[('Mine HPT families…',self.mine),('Vendor data / profiles…',self.vendor_dialog)]),('Export',[('Open SPD bundle…',self.export_bundle),('Public submission…',self.submission),('Saved HPT families…',self.export_families)])]:
+            button=ttk.Menubutton(actions,text=title);menu=tk.Menu(button,tearoff=False)
+            for label,callback in items:menu.add_command(label=label,command=lambda cb=callback:editor.run(cb))
+            button.configure(menu=menu);button.pack(side='left',padx=3)
+        ttk.Button(actions,text='Remove selected…',command=lambda:editor.run(self.remove_selected)).pack(side='left',padx=5)
+        ttk.Button(actions,text='Clean missing references…',command=lambda:editor.run(self.cleanup_missing)).pack(side='left',padx=5)
+        ttk.Button(actions,text='Collection trash…',command=lambda:editor.run(self.show_trash)).pack(side='left',padx=5)
+        self.summary=tk.StringVar(value='Select a module to inspect it; double-click to open it in the workbench.')
+        ttk.Label(parent,textvariable=self.summary,padding=(10,4),wraplength=1150).pack(fill='x')
+        self.panes=ttk.Panedwindow(parent,orient='vertical');self.panes.pack(fill='both',expand=True,padx=8,pady=(0,8))
+        table_frame=ttk.Frame(self.panes);self.panes.add(table_frame,weight=8)
+        self.table=ttk.Treeview(table_frame,columns=('memory','manufacturer','part','oem_part_number','serial','integrity'),show='headings',selectmode='extended',height=18)
+        for key,title,width in [('memory','Type',70),('manufacturer','Manufacturer',230),('part','Model / part number',260),('oem_part_number','OEM part / HP family',200),('serial','Serial',125),('integrity','Integrity',95)]:self.table.heading(key,text=title);self.table.column(key,width=width,minwidth=60)
+        scroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.table.yview);scroll.pack(side='right',fill='y')
+        horizontal=ttk.Scrollbar(table_frame,orient='horizontal',command=self.table.xview);horizontal.pack(side='bottom',fill='x')
+        self.table.configure(yscrollcommand=scroll.set,xscrollcommand=horizontal.set);self.table.pack(fill='both',expand=True)
+        self.table.bind('<<TreeviewSelect>>',lambda event:self.selection_summary())
+        self.table.bind('<Double-1>',lambda event:editor.run(self.open_selected) if self.table.identify_row(event.y) else None)
+        self.details_frame=ttk.Frame(self.panes);self.details=ScrolledText(self.details_frame,height=8,wrap='word',font='TkFixedFont');self.details.pack(fill='both',expand=True)
+        editor.set_text(self.details,'Imports preserve source files and deduplicate by SHA-256. Open bundles verify every payload before import. Public submission remains an offline export.')
+
+    def toggle_filters(self):
+        if self.show_filters.get():self.filters_container.pack(fill='x',after=self.search_bar)
+        else:self.filters_container.pack_forget()
+
+    def toggle_details(self):
+        if self.show_details.get():
+            if str(self.details_frame) not in self.panes.panes():self.panes.add(self.details_frame,weight=2)
+        elif str(self.details_frame) in self.panes.panes():self.panes.forget(self.details_frame)
+
+    def selection_summary(self):
+        selection=self.table.selection()
+        if len(selection)!=1:self.summary.set(f'{len(selection)} images selected');return
+        row=self.display_rows.get(selection[0])
+        if row:self.summary.set(f"{row['memory']} | {row['manufacturer']} | {row['part']} | {row.get('capacity_mib','?')} MiB | {row.get('ranks','?')} ranks | {row['integrity']} | SHA-256 {row['sha256'][:16]}…")
+
+    def remove_selected(self):
+        import tkinter as tk
+        from tkinter import ttk
+        self.editor.hardware.idle();catalog=self.require();plan=catalog.removal_plan(self.table.selection())
+        dialog=tk.Toplevel(self.root);dialog.title('Review collection removal');dialog.geometry('1000x600');dialog.transient(self.root)
+        counts=plan['dependents'];message=f"Remove {len(plan['hashes'])} images from the active collection. {len(plan['files'])} managed file paths will be quarantined in collection trash.\nDependent profiles: {counts['vendor_profiles']}; recipes: {counts['merge_recipes']}; learned families: {counts['families']}.\nExternal source files and the open editor buffer remain untouched."
+        ttk.Label(dialog,text=message,wraplength=950,padding=12).pack(fill='x')
+        tree=ttk.Treeview(dialog,columns=('part','serial','path'),show='headings',height=12)
+        for key,title,width in [('part','Part number',250),('serial','Serial',130),('path','Managed file',570)]:tree.heading(key,text=title);tree.column(key,width=width)
+        scroll=ttk.Scrollbar(dialog,command=tree.yview);scroll.pack(side='right',fill='y');tree.configure(yscrollcommand=scroll.set);tree.pack(fill='both',expand=True,padx=8)
+        for row in plan['tables']['images']:
+            metadata=json.loads(row['metadata']);tree.insert('','end',values=(metadata['part'],metadata['serial'],row['path']))
+        include=tk.BooleanVar(value=False)
+        ttk.Checkbutton(dialog,text='Also remove the listed dependent profiles, recipes and learned families (restorable from trash)',variable=include).pack(anchor='w',padx=10,pady=8)
+        def apply():
+            self.editor.hardware.idle();report=catalog.remove_images(plan,include.get());self.editor.factory.discovery_key=None;self.refresh();self.editor.set_text(self.details,json.dumps(report,indent=2));dialog.destroy();self.location.set(f"{catalog.root} — removed {report['removed']} images; restore them through Collection trash")
+        ttk.Button(dialog,text='Move reviewed images to collection trash',command=lambda:self.editor.run(apply)).pack(pady=10)
+        return dialog
+
+    def cleanup_missing(self):
+        import tkinter as tk
+        from tkinter import ttk
+        self.editor.hardware.idle();catalog=self.require();review=catalog.missing_references()
+        dialog=tk.Toplevel(self.root);dialog.title('Review missing external references');dialog.geometry('1050x600');dialog.transient(self.root)
+        ttk.Label(dialog,text=f"{len(review['missing'])} missing external file references; {len(review['unreadable'])} unreadable/ambiguous references retained.\nThis removes stale pointers only. Managed binary snapshots, retained originals, profiles and external files are not deleted.",wraplength=1000,padding=12).pack(fill='x')
+        tree=ttk.Treeview(dialog,columns=('sha','source'),show='headings',height=16)
+        for key,title,width in [('sha','Image SHA-256',200),('source','Missing external file',800)]:tree.heading(key,text=title);tree.column(key,width=width)
+        scroll=ttk.Scrollbar(dialog,command=tree.yview);scroll.pack(side='right',fill='y');tree.configure(yscrollcommand=scroll.set);tree.pack(fill='both',expand=True,padx=8)
+        for row in review['missing']:tree.insert('','end',values=(row['sha'][:16],row['source']))
+        def apply():
+            self.editor.hardware.idle();result=catalog.cleanup_references(review);self.editor.set_text(self.details,json.dumps(dict(result,retained=review['unreadable']),indent=2));dialog.destroy();self.location.set(f"{catalog.root} — cleaned {result['references_removed']} stale references; all managed images retained")
+        ttk.Button(dialog,text='Remove reviewed missing references',command=lambda:self.editor.run(apply)).pack(pady=10)
+        return dialog
+
+    def show_trash(self):
+        import tkinter as tk
+        from tkinter import ttk,messagebox
+        self.editor.hardware.idle();catalog=self.require();dialog=tk.Toplevel(self.root);dialog.title('Collection trash');dialog.geometry('800x520');dialog.transient(self.root)
+        ttk.Label(dialog,text='Removal packages contain managed files and metadata. Restore a package or explicitly delete it permanently. External source files are never included.',padding=10,wraplength=760).pack(fill='x')
+        tree=ttk.Treeview(dialog,columns=('id','images','files'),show='headings',selectmode='extended')
+        for key,title,width in [('id','Removal package',450),('images','Images',100),('files','Quarantined files',160)]:tree.heading(key,text=title);tree.column(key,width=width)
+        tree.pack(fill='both',expand=True,padx=8)
+        def refresh():
+            tree.delete(*tree.get_children())
+            for row in catalog.trash_entries():tree.insert('','end',iid=row['id'],values=(row['id'],row['images'],row['files']))
+        def restore():
+            self.editor.hardware.idle();selected=tree.selection()
+            if len(selected)!=1:raise ValueError('Select one removal package to restore')
+            catalog.restore_trash(selected[0]);self.editor.factory.discovery_key=None;self.refresh();refresh()
+        def empty():
+            self.editor.hardware.idle();selected=tree.selection()
+            if not selected:raise ValueError('Select removal packages to delete permanently')
+            if messagebox.askyesno('Permanently delete collection trash',f'Permanently delete {len(selected)} selected removal packages and their quarantined files? This cannot be undone.',parent=dialog,default='no'):catalog.empty_trash(selected);refresh()
+        buttons=ttk.Frame(dialog,padding=8);buttons.pack(fill='x')
+        ttk.Button(buttons,text='Restore selected package',command=lambda:self.editor.run(restore)).pack(side='left',padx=4)
+        ttk.Button(buttons,text='Permanently empty selected packages…',command=lambda:self.editor.run(empty)).pack(side='left',padx=4)
+        refresh();return dialog
 
     def require(self):
         if self.catalog is None: raise ValueError('Open or create a collection first')
@@ -83,7 +148,9 @@ class CatalogPanel:
         self.editor.hardware.idle()
         path=filedialog.askdirectory(parent=self.root,title='Open or create SPD collection')
         if path:
-            self.catalog=Catalog(path); self.location.set(str(self.catalog.root)); self.refresh();self.save_settings()
+            self.catalog=Catalog(path);self.location.set(str(self.catalog.root));self.refresh();self.save_settings()
+            if self.catalog.migration_warnings:
+                self.show_details.set(True);self.toggle_details();self.editor.set_text(self.details,json.dumps(dict(unreadable_catalog_artifacts=self.catalog.migration_warnings),indent=2))
 
     def save_settings(self):
         from spd_settings import save
@@ -129,6 +196,7 @@ class CatalogPanel:
                                        None if self.year_to.get()=='Any' else self.year_to.get(),self.sort.get())
             except ValueError as exc:
                 self.count.set(str(exc));return
+            self.display_rows={r['sha256']:r for r in rows}
             for r in rows:
                 self.table.insert('','end',iid=r['sha256'],values=(r['memory'],r['manufacturer'],r['part'],r.get('hp_family_part_number') or r.get('oem_part_number',''),r['serial'],r['integrity']))
             self.count.set(f'{len(rows)} shown / {len(self.catalog.rows())} total images')
@@ -144,14 +212,16 @@ class CatalogPanel:
         catalog=self.require()
         def done(result):
             rows,errors=result
-            self.refresh()
+            self.editor.factory.discovery_key=None;self.refresh()
+            self.location.set(f'{catalog.root} — imported {len(rows)} entries; {len(errors)} rejected inputs/members')
+            if errors:self.show_details.set(True);self.toggle_details()
             self.editor.set_text(self.details,json.dumps(dict(collection=str(catalog.root),accepted=len(rows),errors=errors),indent=2))
         self.editor.hardware.start_job('Importing SPD files into collection…',lambda:catalog.import_files(paths),done)
 
     def import_files(self):
         from tkinter import filedialog
         self.require()
-        paths=filedialog.askopenfilenames(parent=self.root,title='Add SPD images',filetypes=[('SPD images','*.bin *.spd *.hex *.txt'),('All files','*')])
+        paths=filedialog.askopenfilenames(parent=self.root,title='Add SPD images',filetypes=[('SPD images','*.bin *.spd *.thp *.rw *.hex *.txt *.spdz *.zip *.7z'),('All files','*')])
         if paths:self.import_paths(paths)
 
     def import_folder(self):
@@ -161,7 +231,8 @@ class CatalogPanel:
         if path:
             paths=[]
             for p in Path(path).rglob('*'):
-                if p.is_file() and not p.is_symlink() and p.suffix.lower() in ('.bin','.spd','.hex','.txt'):
+                if self.catalog and any(parent in (self.catalog.root/'modules',self.catalog.root/'originals') for parent in p.resolve().parents):continue
+                if p.is_file() and not p.is_symlink() and p.suffix.lower() in ('.bin','.spd','.thp','.rw','.hex','.txt','.spdz','.zip','.7z'):
                     paths.append(p)
                     if len(paths)>10000: raise ValueError('Folder exceeds 10,000 candidate files; import smaller folders')
             self.import_paths(paths)
@@ -194,6 +265,15 @@ class CatalogPanel:
             serial=int.from_bytes(doc.spd.data[122:126],'big')
         self.editor.hardware.start_job('Analyzing HPT family evidence…',lambda:catalog.hp_analysis(sha,serial),
                                       lambda result:self.editor.set_text(self.details,json.dumps(result,indent=2)))
+
+    def export_bundle(self):
+        from tkinter import filedialog
+        catalog=self.require();hashes=self.table.selection()
+        if not hashes:raise ValueError('Select catalog images to export')
+        path=filedialog.asksaveasfilename(parent=self.root,title='New open SPD bundle',defaultextension='.spdz',filetypes=[('Open SPD bundle','*.spdz'),('ZIP','*.zip')])
+        if path:
+            catalog.export_bundle(hashes,path)
+            self.editor.set_text(self.details,f'Exported {len(hashes)} images with a UTF-8 manifest and verified SHA-256 payloads. Raw images retain their original SPD integrity status.')
 
     def submission(self):
         from tkinter import filedialog,messagebox
@@ -259,6 +339,8 @@ class CatalogPanel:
     def capture_editor(self):
         catalog=self.require();doc=self.editor.require_document()
         row=catalog.add(doc.spd.data,'editor snapshot')
+        source=getattr(doc,'source_import',None)
+        if source:catalog.retain_import(row['sha256'],dict(source,data=doc.spd.data,metadata={}))
         report=getattr(doc,'vendor_profile_application',None)
         if report:
             if report['result_sha256']!=row['sha256']:

@@ -1,6 +1,6 @@
 # SPD library
 
-The **SPD library** tab integrates collection management with the editor.
+The top-level **SPD library** area integrates collection management with the editor.
 Choose **Open / create collection** and select a writable folder. The collection
 contains a portable `library.sqlite3` database and exact binary copies under:
 
@@ -16,7 +16,7 @@ checked when reopening them.
 
 ## Import and edit
 
-Use **Add SPD files** for binary or supported hex-text dumps, **Import folder**
+Use **Add SPD files / archives** for binary, TH20, supported text dumps or archives, **Import folder**
 for a recursive batch, or **Add editor image** to capture the current editor
 buffer, including unsaved changes. Imports never move or repair the source.
 Identical bytes share one database entry while source references are retained.
@@ -24,12 +24,13 @@ Different dumps with the same serial remain distinct. Invalid checksums remain
 visible for recovery work. Errors are reported per file.
 
 Imports use the core SDR/DDR/DDR2/DDR3 decoder and its 128-256-byte limits.
-Large firmware images must first be extracted with the firmware scanner. Files
-larger than 1 MiB and symbolic links are rejected, and folder imports are limited
-to 10,000 candidate files. Folder imports consider `.bin`, `.spd`, `.hex` and
-`.txt`. An import result's accepted count includes duplicates encountered.
+Large firmware images must first be extracted with the firmware scanner. Individual image sources larger than 1 MiB and symbolic links are rejected;
+archives have separate bounded expansion limits. Folder imports are limited to
+10,000 candidate files and consider `.bin`, `.spd`, `.thp`, `.rw`, `.hex`, `.txt`,
+`.zip`, `.spdz` and `.7z`. Managed `modules/` and `originals/` directories are
+skipped when importing a collection root. An import result's accepted count includes duplicates encountered.
 
-Use the dropdowns to combine module vendor, DRAM vendor, memory generation,
+Enable **Filters** and use the dropdowns to combine module vendor, DRAM vendor, memory generation,
 module type, capacity (MiB), SPD maximum speed (MT/s), ranks, ECC, integrity,
 HPT presence, image size and manufacturing year. The From/To year controls are
 inclusive; applying a bound excludes unknown dates. Unknown dates remain an
@@ -41,7 +42,7 @@ Existing collections are automatically backfilled with this metadata on open.
 The original source references and managed filenames are retained. The table
 reports filtered and total image counts.
 
-Select one row and **Open selected in editor**. The editor receives a snapshot;
+Select one row and choose **Module actions → Open selected in editor**. The editor receives a snapshot;
 Save As and subsequent **Add editor image** preserve a modified version without
 overwriting the archived original. Search matches identity, integrity and hash.
 
@@ -151,7 +152,7 @@ remain consistency evidence rather than proof of authentication.
 
 ## Public submission interface
 
-Select one or more rows and choose **Prepare public submission**. After an
+Select one or more rows and choose **Export → Public submission**. After an
 explicit disclosure prompt, the tool creates a new ZIP with raw images and a
 versioned `spd-tool-submission/2` manifest. Each image entry includes its actual
 `part_number`, module and DRAM manufacturers, memory/module types, serial,
@@ -175,3 +176,79 @@ and manages serial-preserving HP HPT templates for matching manufacturer PNs.
 See [Vendor metadata and HP profiles](VENDOR_PROFILES.md) for compatibility
 checks, explicit HPT solution selection, opaque-byte options and generated-data
 provenance. Profile-generated entries are excluded from family mining.
+
+
+## THP and open-bundle imports
+
+File and folder imports accept TH20 `.thp`, supported `.rw`, raw/text images,
+ZIP/open bundles and optional 7z collections. Normalized `.bin` images are stored
+under the collection hierarchy; original nonbinary sources and conversion hashes
+are retained separately. Unknown members are reported individually during generic
+archive import. Open bundles require complete manifest/hash verification first.
+
+Use **Export open bundle** for selected images, OEM details, provenance and original
+sources. See [THP conversion](THP_IMPORT.md) and the
+[open format specification](OPEN_SPD_BUNDLE.md).
+
+## Dedicated library area and file-list space
+
+![Dedicated library area with an expanding file list](images/spd-library.png)
+
+The image combines supplied imports and explicitly labelled synthetic layout fixtures.
+
+Use the **SPD library** button at the top of the application. The library is
+separate from the module editor's sidebar. The editor's save/undo controls and
+sidebar are hidden while browsing the collection; **Module workbench** returns
+to the last editing page. Opening a selected collection image returns to the
+module workbench automatically.
+
+The file list expands with the window and has independent vertical and
+horizontal scrollbars. Filters and the details/log pane start collapsed.
+Enable **Filters** for vendor, type, capacity, speed, rank, integrity and date
+controls; enable **Details / log** for import results or advanced reports.
+When details are shown, drag the divider to allocate more space to the list.
+Rejected bulk-import entries open the log automatically. Double-click a row
+to open it; use **Module actions**, **HP tools** and **Export** for operations
+on the selection.
+
+## Remove entries and restore collection trash
+
+Select one or more rows and choose **Remove selected**. The review shows the
+modules, managed-file paths and counts of dependent donor profiles, merge
+recipes and learned HPT families. Dependent records require an explicit
+checkbox before removal can proceed. A stale review is rejected if collection
+records or reviewed files change.
+
+Removal moves managed `.bin` images and unshared retained originals into a
+`.trash/<removal-id>/` package under the collection. Database records, annotations,
+generated-image provenance and affected dependencies are retained in its
+manifest for restoration. Shared original sources remain active while another
+image refers to them. External source files are never moved or deleted, and
+the currently open editor buffer is retained.
+
+**Collection trash → Restore selected package** restores files and metadata,
+including dependent profiles and learned families. Restoration verifies the
+quarantined bytes and refuses to overwrite changed metadata or files. Matching
+already-restored records can be reused, including recovery after an interrupted
+removal. Missing managed artifacts can be removed from the index too; restoring
+such a removal cannot reconstruct bytes that were already absent.
+
+Trash is retained until **Permanently empty selected packages** is explicitly
+confirmed. This frees the quarantined files and cannot be undone. Removing a
+collection entry is therefore distinct from permanently deleting its trash.
+
+## Clean missing external references
+
+**Clean missing references** previews stale external source-file pointers.
+Applying that review removes only those pointers from the source index:
+managed binary snapshots, retained original wrappers, annotations, profiles and
+external files remain untouched. A source that reappears before cleanup is
+retained. Virtual observations such as `editor snapshot` are not treated as
+filenames. Unreadable or ambiguous legacy relative paths are reported and kept
+for manual review; new imports record absolute external source paths.
+
+A missing external source does not mean that its normalized library snapshot
+is missing. To remove a missing managed image's index entry, select that module
+and use the separate removal review. Older collections with unreadable artifacts
+can still open for review; failed metadata migration is reported rather than
+silently deleting records.

@@ -64,7 +64,7 @@ def quantize(value,mtb,ftb,width,upper=False):
     return best
 
 
-def encode_profile(data,index,profile,replace_customer=False):
+def encode_profile(data,index,profile,replace_customer=False,allow_inconsistent=False):
     require(data);index=integer(index,1,2,'Profile');result=bytearray(data)
     required=('voltage_V','cas_latencies','mtb_dividend','mtb_divisor','timings_ns')
     if not isinstance(profile,dict) or any(k not in profile for k in required):raise ValueError('Incomplete XMP profile object')
@@ -112,8 +112,8 @@ def encode_profile(data,index,profile,replace_customer=False):
         else:
             result[base+18]=(result[base+18]&240)|(count>>8);result[base+19]=count&255
         if fine_offset is not None and revision==0x13:result[base+fine_offset]=fine&255
-    if max(cas)*actual['tCKmin']<actual['tAAmin']:raise ValueError('No selected CAS latency satisfies encoded tAA at encoded tCK')
-    if actual['tRCmin']<actual['tRASmin']+actual['tRPmin']:raise ValueError('Encoded tRC must cover encoded tRAS + tRP')
+    if not allow_inconsistent and max(cas)*actual['tCKmin']<actual['tAAmin']:raise ValueError('No selected CAS latency satisfies encoded tAA at encoded tCK')
+    if not allow_inconsistent and actual['tRCmin']<actual['tRASmin']+actual['tRPmin']:raise ValueError('Encoded tRC must cover encoded tRAS + tRP')
     for key,offset in RAW_FIELDS.items():
         if key in profile:result[base+offset]=integer(profile[key],0,255,key)
     # All XMP fields live outside base CRC; JEDEC, identity and the other profile stay unchanged.

@@ -55,7 +55,7 @@ python spd_editor.py module.bin
 | Overview | Structured identity, organization, operating points and integrity |
 | Decoded JSON | Complete decoded fields and raw details |
 | Byte editor | Individual bytes, hex ranges, part number and serial |
-| Registers / buffers | Named fields, legal encodings, locations and field notes |
+| SPD field editor | Named fields, legal encodings, locations and field notes |
 | HP SmartMemory | Registry matching, HPT edits and candidate computation |
 | Comparison | Byte differences between the current buffer and another image |
 | Hardware / programmer | Linux or USB bridge discovery, reads and reviewed EEPROM programming |
@@ -194,3 +194,19 @@ explicit `--range`, an original-image `--backup`, and mandatory verification.
 
 See [Hardware acquisition](HARDWARE.md) for transport options, HP Gen8 platform
 constraints and programming requirements.
+
+
+## Container conversion and bulk collection import
+
+```sh
+python spd_tool.py convert --source module.thp --out module.bin
+python spd_tool.py convert --source first.thp --source second.thp --out modules.spdz
+python spd_tool.py convert --source collection.zip --out-dir converted
+python spd_tool.py library-import --collection ./library --source SPDs.7z
+```
+
+Conversion preserves exact payloads, including invalid SPD integrity. Use
+`--format bin` or `--format spdz` to select an output explicitly. Bulk reports
+include per-input errors; exit status 2 indicates partial failure. Existing
+output files are not overwritten. Read [THP import](THP_IMPORT.md) and the
+[open bundle specification](OPEN_SPD_BUNDLE.md) for format and validation scope.

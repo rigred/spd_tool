@@ -1,6 +1,6 @@
 # Registered modules and HP SmartMemory
 
-Named fields are available in the **Registers / buffers** tab and through
+Named fields are available in the **SPD field editor** page and through
 `spd_tool.py fields` / `edit`. The schema selects fields by memory generation,
 module family and register type. Field locations, units and legal encodings
 are included in `fields` JSON output.

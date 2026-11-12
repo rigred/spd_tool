@@ -210,3 +210,15 @@ content hash. A changed source becomes a new immutable image; existing images,
 annotations, recipes and donor relations remain. Duplicate content is not
 added again. Missing paths and parse failures are reported. An edited managed
 artifact is not silently trusted: normal catalog hash verification still fails.
+
+## Interactive feasibility and deliberate overrides
+
+The XMP page includes field-level live diagnostics, the current CAS/timebase
+clock envelope and direct clock-based timing generation. Native timing inputs
+also flag invalid encodings and dependencies, with direct speed-based draft
+generation. See [live feasibility and override behavior](XMP_TIMING_PLANNER.md#live-feasibility-and-clock-based-drafts).
+
+Native, EPP and XMP timing editors offer **Idiot override** for deliberate
+logical inconsistencies. It requires a recorded reason and retains the conflict
+warnings. It changes logical validation, not the width or meaning of an SPD
+field. Explicit physical programming remains a separate operation.

@@ -100,15 +100,13 @@ def _try_load_text_hex(raw: bytes) -> Optional[bytes]:
 
 
 def load_spd_file(path: str) -> SPD:
-    """Read a binary image or strict hex-text dump without truncation."""
-    with open(path, "rb") as f:
-        raw = f.read()
-    parsed = _try_load_text_hex(raw)
-    if parsed is not None:
-        return SPD(parsed, path)
-    if raw and all(b in b"\t\r\n" or 32 <= b <= 126 for b in raw):
-        raise ValueError(f"{path}: Invalid hex-text SPD dump")
-    return SPD(raw, path)
+    """Load one image, including TH20 or a single-image open bundle; never repair."""
+    from spd_containers import read_inputs
+    records,errors=read_inputs(path)
+    if errors:raise ValueError('; '.join(item['error'] for item in errors))
+    if len(records)!=1:raise ValueError('Choose a single image; import multi-image archives through the SPD library')
+    record=records[0];spd=SPD(record['data'],str(path));spd.source_import=record
+    return spd
 
 
 def hexdiff(a: bytes, b: bytes) -> List[Tuple[int, Optional[int], Optional[int]]]:
