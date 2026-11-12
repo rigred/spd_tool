@@ -52,6 +52,53 @@ collection. Existing JSON/HTML indexes are not needed and are left untouched.
 DDR4 records in the old organizer remain there until core catalog support is
 extended; the GUI reports those imports as unsupported.
 
+## OEM sticker details
+
+**OEM sticker details** edits the selected library entry. **Editor OEM details**
+archives the current editor snapshot if needed and edits its annotations. Fields
+include OEM name, OEM part number, spare/replacement number, assembly number,
+model/product, HP HPT family PN and notes. Blank fields remove previous values;
+clearing all fields removes the annotation. No SPD bytes, module manufacturer
+part number or hash are changed. The annotations are stored separately in the
+collection database with user-entry provenance and a UTC timestamp.
+
+Entries with identical SPD bytes share annotations because the library is
+content-addressed, not a physical inventory system. Preserve multiple sticker
+observations in notes when necessary. Opening a library entry in the editor
+retains its annotation context; **Add editor image** carries those details to a
+new edited snapshot in the same collection when that snapshot has no existing
+annotations. Opening another file or reading another device creates a new
+editor document and does not inherit the previous module's labels.
+
+OEM names and part numbers are searchable; an OEM dropdown and OEM part/family
+column are included. Submission manifests retain the actual SPD-derived
+`part_number` and include user-entered sticker details separately under `oem`.
+Manual labels are never presented as values decoded from the EEPROM.
+
+### HP/HPE family grouping across vendors
+
+For OEM names HP, HPE, Hewlett-Packard or Hewlett Packard Enterprise, analysis
+uses the explicit **HP HPT family PN**, falling back to **OEM part number**.
+If the family identifier is on a spare or assembly label, copy that number into
+the explicit family field. Spare and assembly numbers are retained separately;
+the tool does not guess which sticker identifier defines the HPT family.
+
+A matching manually entered HP family PN groups samples across module vendors,
+vendor part numbers and module layouts. HP can source the same labeled assembly
+from several suppliers. Original vendor identities and per-image annotation
+provenance remain in the evidence report. An OEM PN is a grouping hint, not
+proof of a relation: distinct serial counts, integrity checks, HPT consistency,
+conflicting-serial detection and review-before-save still apply to the combined
+group. Inconsistent revisions are not automatically split into guessed families.
+Other OEMs' part numbers do not enter HP grouping. Modules without an HP family
+annotation retain the previous vendor/model/organization grouping.
+
+Saved families are scoped to that HP PN when supplied. Changing/removing an
+evidence module's annotation invalidates reuse of an affected saved relation
+until it is mined and reviewed again. Exported family registries include the
+scope and original vendor part aliases so downstream consumers can inspect how
+the relation was obtained.
+
 ## HP SmartMemory
 
 **Analyze HPT family** examines the selected DDR3 model. **Compute HPT for editor
@@ -62,8 +109,8 @@ HPT values and limitations. They do not program hardware or change an image.
 Use the editor's HP SmartMemory tab to apply a deliberately chosen value.
 
 Registered family lookup uses normalized exact part numbers and listed aliases.
-For an unregistered model, local evidence is grouped by manufacturer, model and
-module organization. Only integrity-valid images with a complete HPT tag count.
+For an unregistered model, local evidence is grouped by an explicitly supplied HP family PN, or otherwise
+by manufacturer, model and module organization. Only integrity-valid images with a complete HPT tag count.
 Repeated images or repeated serials do not count as independent evidence.
 Conflicting HPT values for one serial prevent local inference.
 
@@ -79,7 +126,8 @@ one silently. Selected-image analysis can compute a relation without saving it.
 
 **Mine HPT families** scans the whole collection, independent of the current
 filters. It groups integrity-valid DDR3 HPT samples by exact normalized module
-part number, manufacturer and module organization. Each group reports evidence
+part number, manufacturer and module organization, unless an explicit HP
+family PN supplies the cross-vendor grouping described above. Each group reports evidence
 hashes, distinct serial count, known registry matches and one of: insufficient,
 conflicting-serial, inconsistent, underdetermined, unreadable-evidence or candidate. Constant-HPT
 relations are explicitly flagged. Duplicate serials do not increase the count.

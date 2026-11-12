@@ -58,12 +58,25 @@ def describe(data):
                 integrity=integrity_info(data)['status'], length=len(data))
 
 
+def hp_part(details):
+    if normalized(details.get('oem_name','')) not in ('HP','HPE','HEWLETTPACKARD','HEWLETTPACKARDENTERPRISE'):return ''
+    return details.get('hp_family_part_number') or details.get('part_number','')
+
+
+def family_scope(row,data):
+    hp=row.get('hp_family_part_number')
+    # A manually supplied HP family PN crosses vendor/organization boundaries.
+    # Consistency checks still evaluate every distinct serial/HPT pair together.
+    return ('OEM:HP',normalized(hp),'HP-PN') if hp else (row['manufacturer'],normalized(row['part']),data[3:9].hex())
+
+
 class Catalog:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS images (sha TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, metadata TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS annotations (sha TEXT PRIMARY KEY, details TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS families (id TEXT PRIMARY KEY, record TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS sources (sha TEXT NOT NULL, source TEXT NOT NULL, UNIQUE(sha,source))')
         # Backfill existing catalogs once; source paths and managed filenames remain unchanged.
@@ -123,8 +136,14 @@ class Catalog:
             raise ValueError('Manufacturing year From must not exceed To')
         with self.connect() as db:
             rows = [json.loads(row['metadata']) for row in db.execute('SELECT metadata FROM images ORDER BY path')]
+        with self.connect() as db:
+            annotations={r['sha']:json.loads(r['details']) for r in db.execute('SELECT sha,details FROM annotations')}
         result=[]
         for row in rows:
+            details=annotations.get(row['sha256'],{})
+            row.update(oem=details, oem_name=details.get('oem_name',''), oem_part_number=details.get('part_number',''),
+                       oem_spare_number=details.get('spare_number',''), oem_assembly_number=details.get('assembly_number',''),
+                       hp_family_part_number=hp_part(details))
             if search.casefold() not in ' '.join(str(v) for v in row.values()).casefold(): continue
             if any(label(row.get(k))!=str(v) for k,v in (filters or {}).items() if v!='All'): continue
             year=row.get('manufacture_year')
@@ -139,7 +158,7 @@ class Catalog:
 
     def facets(self):
         rows=self.rows()
-        keys=('manufacturer','dram_manufacturer','memory','module_type','capacity_mib','data_rate_MTps',
+        keys=('oem_name','manufacturer','dram_manufacturer','memory','module_type','capacity_mib','data_rate_MTps',
               'ranks','ecc','integrity','hpt_present','length','manufacture_year')
         result={key:sorted({label(r.get(key)) for r in rows}) for key in keys}
         for key in ('capacity_mib','data_rate_MTps','ranks','length','manufacture_year'):
@@ -157,32 +176,64 @@ class Catalog:
         if hashlib.sha256(data).hexdigest() != sha: raise ValueError('Catalog image hash mismatch')
         return data
 
+    def oem_details(self, sha):
+        with self.connect() as db:
+            row=db.execute('SELECT details FROM annotations WHERE sha=?',(sha,)).fetchone()
+        return json.loads(row['details']) if row else {}
+
+    def set_oem_details(self, sha, details):
+        self.data(sha)  # Only annotate a verified collection entry.
+        allowed=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','notes')
+        if set(details)-set(allowed):raise ValueError('Unknown OEM detail field')
+        cleaned={}
+        for key,value in details.items():
+            if not isinstance(value,str):raise ValueError('OEM details must be text')
+            value=value.strip()
+            limit=2000 if key=='notes' else 128
+            if len(value)>limit or any(ord(c)<32 and (key!='notes' or c not in '\n\t') for c in value):raise ValueError('OEM detail is too long or contains control characters')
+            if value:cleaned[key]=value
+        if cleaned:
+            cleaned.update(source='user-entered sticker metadata',updated_at=datetime.now(timezone.utc).isoformat())
+        with self.connect() as db:
+            if cleaned:db.execute('INSERT OR REPLACE INTO annotations VALUES (?,?)',(sha,json.dumps(cleaned)))
+            else:db.execute('DELETE FROM annotations WHERE sha=?',(sha,))
+        return cleaned
+
     def hp_analysis(self, sha, serial=None):
         data = self.data(sha)
         if data[2] != 11 or len(data)<184: raise ValueError('HPT analysis requires DDR3 with the customer block present')
-        row = next(r for r in self.rows() if r['sha256']==sha)
+        all_rows=self.rows();by_sha={r['sha256']:r for r in all_rows}
+        row = by_sha[sha]
         registry = load_registry(str(Path(__file__).with_name('hp_families.json')))
         with self.connect() as db:
             saved = [json.loads(r['record']) for r in db.execute('SELECT record FROM families')]
+        scope=family_scope(row,data)
         for record in saved:
-            if record['manufacturer']==row['manufacturer'] and record['part_normalized']==normalized(row['part']) and record['organization']==data[3:9].hex():
-                registry[record['id']] = dict(record['family'], equivalents=[row['part']])
+            record_scope=tuple(record.get('scope',[record['manufacturer'],record['part_normalized'],record['organization']]))
+            if record_scope==scope:
+                family=dict(record['family'],equivalents=[row['part'],row.get('hp_family_part_number','')])
+                try:
+                    if any(member not in by_sha or family_scope(by_sha[member],self.data(member))!=scope for member in record['evidence_sha256']):
+                        family['_evidence_error']='Saved family OEM/model assignments changed; mine and review the collection again'
+                except (ValueError,OSError):family['_evidence_error']='Saved family evidence could not be verified'
+                registry[record['id']] = family
         serial = int.from_bytes(data[122:126],'big') if serial is None else serial
         families = []
+        names_to_match={normalized(row['part'])}
+        if row.get('hp_family_part_number'):names_to_match.add(normalized(row['hp_family_part_number']))
         for key, family in registry.items():
-            names = [family.get('name',''), *family.get('equivalents',[])]
-            if normalized(row['part']) not in [normalized(name) for name in names]: continue
+            names = [key,family.get('name',''), *family.get('equivalents',[])]
+            if not names_to_match.intersection(normalized(name) for name in names if name): continue
             if all(k in family for k in ('A','B','K')):
                 families.append(dict(key=key,origin='registry',family=family))
         samples = {}
-        # Exact manufacturer/model and matching module organization, not a guessed alias.
-        for other in self.rows():
-            if (other['manufacturer'],normalized(other['part'])) != (row['manufacturer'],normalized(row['part'])): continue
-            raw = self.data(other['sha256'])
-            if len(raw)<184 or raw[2]!=11 or raw[3:9]!=data[3:9] or raw[176:180]!=b'HPT\0': continue
-            if integrity_info(raw)['status']!='VALID': continue
-            s,h = int.from_bytes(raw[122:126],'big'),int.from_bytes(raw[180:184],'big')
-            samples.setdefault(s,set()).add(h)
+        for other in all_rows:
+            raw=self.data(other['sha256'])
+            if len(raw)<184 or raw[2]!=11 or raw[176:180]!=b'HPT\0':continue
+            if family_scope(other,raw)!=scope:continue
+            if integrity_info(raw)['status']!='VALID':continue
+            sample_serial,h=int.from_bytes(raw[122:126],'big'),int.from_bytes(raw[180:184],'big')
+            samples.setdefault(sample_serial,set()).add(h)
         conflicting = any(len(h)!=1 for h in samples.values())
         pairs = sorted((s,next(iter(h))) for s,h in samples.items())
         if not families and len(pairs)>=2 and not conflicting and row['part'] != 'Unknown model':
@@ -199,27 +250,29 @@ class Catalog:
         for entry in families:
             family = entry['family']
             try:
+                if family.get('_evidence_error'):raise ValueError(family['_evidence_error'])
                 a,b,k=(int(family[c],16) for c in ('A','B','K'))
                 if conflicting or any((a*s+b*h)&0xFFFFFFFF!=k for s,h in pairs):
                     raise ValueError('Current collection evidence conflicts with this family')
                 if not b or (b & -b)>1024: raise ValueError('Underdetermined family; more than 1024 possible solutions')
                 entry['candidates'] = [f'{v:08X}' for v in compute_hpt_solutions(serial,family)]
             except (KeyError,ValueError) as exc: entry['error']=str(exc)
-        return dict(part=row['part'],serial=f'{serial:08X}',distinct_samples=len(pairs),conflicting_samples=conflicting,families=families,
+        return dict(part=row['part'],hp_family_part_number=row.get('hp_family_part_number'),scope=scope,serial=f'{serial:08X}',distinct_samples=len(pairs),conflicting_samples=conflicting,families=families,
                     note='Two samples define a provisional relation. Additional matching samples are consistency evidence, not authentication. No image or global registry is modified.')
 
     def mine_families(self):
         groups, errors = {}, []
         for row in self.rows():
-            if row['memory']!='DDR3' or row['part']=='Unknown model': continue
+            if row['memory']!='DDR3' or row['part']=='Unknown model' and not row.get('hp_family_part_number'): continue
             try:
                 raw=self.data(row['sha256'])
                 if len(raw)<184 or raw[176:180]!=b'HPT\0' or integrity_info(raw)['status']!='VALID': continue
-                key=(row['manufacturer'], normalized(row['part']), raw[3:9].hex())
-                group=groups.setdefault(key,dict(part=row['part'],samples={}))
+                key=family_scope(row,raw)
+                group=groups.setdefault(key,dict(part=row.get('hp_family_part_number') or row['part'],samples={},members=[]))
+                group['members'].append(dict(sha256=row['sha256'],manufacturer=row['manufacturer'],part_number=row['part'],oem=row.get('oem',{})))
                 serial=int.from_bytes(raw[122:126],'big');hpt=int.from_bytes(raw[180:184],'big')
                 group['samples'].setdefault(serial,{}).setdefault(hpt,[]).append(row['sha256'])
-            except (ValueError,OSError) as exc: errors.append(dict(sha256=row['sha256'],manufacturer=row['manufacturer'],part_normalized=normalized(row['part']),error=str(exc)))
+            except (ValueError,OSError) as exc: errors.append(dict(sha256=row['sha256'],manufacturer=row['manufacturer'],part_normalized=normalized(row['part']),hp_family_part_number=row.get('hp_family_part_number'),error=str(exc)))
         results=[]
         registry=load_registry(str(Path(__file__).with_name('hp_families.json')))
         for (vendor,part,organization),group in sorted(groups.items()):
@@ -227,7 +280,7 @@ class Catalog:
             evidence=sorted(sha for values in samples.values() for hashes in values.values() for sha in hashes)
             identity=json.dumps([vendor,part,organization],ensure_ascii=True)
             result=dict(id='collection:'+hashlib.sha256(identity.encode()).hexdigest(), manufacturer=vendor,
-                        part=group['part'],part_normalized=part,organization=organization,
+                        part=group['part'],part_normalized=part,organization=organization,scope=[vendor,part,organization],members=group['members'],hp_family_part_number=group['part'] if vendor=='OEM:HP' else None,
                         distinct_serials=len(samples), evidence_sha256=evidence, status='insufficient',family=None)
             if any(len(values)!=1 for values in samples.values()): result['status']='conflicting-serial'
             elif len(samples)>=2:
@@ -249,7 +302,7 @@ class Catalog:
                     if all((a*serial+b*hpt)&0xFFFFFFFF==k for serial,values in samples.items() for hpt in values):
                         matches.append(dict(key=key,name=family.get('name',key)))
                 except (KeyError,TypeError,ValueError): pass
-            if any(e['manufacturer']==vendor and e['part_normalized']==part for e in errors):
+            if any((vendor=='OEM:HP' and normalized(e.get('hp_family_part_number') or '')==part) or (e['manufacturer']==vendor and e['part_normalized']==part) for e in errors):
                 result['status']='unreadable-evidence'
             result['known_matches']=matches
             results.append(result)
@@ -263,7 +316,7 @@ class Catalog:
     def save_family(self, candidate, name=None):
         # Re-mine instead of trusting editable UI/JSON coefficients or stale evidence.
         current=next((r for r in self.mine_families()['groups'] if r['id']==candidate['id']),None)
-        if not current or current['status']!='candidate' or current['evidence_sha256']!=candidate['evidence_sha256']:
+        if not current or current['status']!='candidate' or current['evidence_sha256']!=candidate['evidence_sha256'] or current.get('members')!=candidate.get('members'):
             raise ValueError('Family evidence changed or is not eligible; mine the collection again')
         with self.connect() as db:
             existing=db.execute('SELECT record FROM families WHERE id=?',(current['id'],)).fetchone()
@@ -291,6 +344,8 @@ class Catalog:
         entries=[]
         for sha,data in images:
             metadata=describe(data)
+            details=self.oem_details(sha)
+            if details: metadata['oem']=details
             entries.append(dict(metadata,sha256=sha,file=f'images/{sha}.bin',part_number=metadata['part']))
         manifest = dict(schema='spd-tool-submission/2',status='prepared-offline',images=entries)
         with Path(destination).open('xb') as handle:

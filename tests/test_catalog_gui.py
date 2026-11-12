@@ -60,3 +60,30 @@ class CatalogTkTests(unittest.TestCase):
                 wait()
                 self.assertEqual(len(panel.catalog.saved_families()),1)
             finally:root.destroy()
+
+    def test_loaded_editor_oem_details_and_edited_snapshot(self):
+        import tkinter as tk
+        from tkinter import ttk
+        from spd_catalog import Catalog
+        from spd_editor import SPDEditor,EditorDocument
+        import hashlib
+        with tempfile.TemporaryDirectory() as temp:
+            root=tk.Tk()
+            try:
+                app=SPDEditor(root);panel=app.catalog;panel.catalog=Catalog(temp)
+                raw=ddr3();app.document=EditorDocument(raw);app.refresh()
+                panel.edit_oem(True);root.update()
+                dialog=next(w for w in root.winfo_children() if isinstance(w,tk.Toplevel))
+                fields=next(w for w in dialog.winfo_children() if isinstance(w,ttk.Frame))
+                entries=[w for w in fields.winfo_children() if isinstance(w,ttk.Entry)]
+                entries[0].insert(0,'HPE');entries[1].insert(0,'123456-071')
+                next(w for w in dialog.winfo_children() if isinstance(w,ttk.Button)).invoke()
+                sha=hashlib.sha256(raw).hexdigest()
+                self.assertEqual(panel.catalog.oem_details(sha)['part_number'],'123456-071')
+                self.assertEqual(app.document.spd.data,raw)
+                app.document.edit(140,b'X');panel.add_editor()
+                newsha=hashlib.sha256(app.document.spd.data).hexdigest()
+                self.assertNotEqual(newsha,sha)
+                self.assertEqual(panel.catalog.oem_details(newsha)['part_number'],'123456-071')
+                self.assertEqual(panel.catalog.data(sha),raw)
+            finally:root.destroy()

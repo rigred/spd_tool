@@ -21,7 +21,7 @@ class CatalogPanel:
         self.location = tk.StringVar(value='Choose a collection folder to open or create its database.')
         self.search = tk.StringVar()
         top=ttk.Frame(parent,padding=8); top.pack(fill='x')
-        for label,callback in [('Open / create collection…',self.choose),('Add SPD files…',self.import_files),('Import folder…',self.import_folder),('Add editor image',self.add_editor)]:
+        for label,callback in [('Open / create collection…',self.choose),('Add SPD files…',self.import_files),('Import folder…',self.import_folder),('Add editor image',self.add_editor),('Editor OEM details…',lambda:self.edit_oem(True))]:
             ttk.Button(top,text=label,command=lambda cb=callback:editor.run(cb)).pack(side='left',padx=3)
         ttk.Label(parent,textvariable=self.location,padding=8).pack(fill='x')
         search=ttk.Frame(parent,padding=8); search.pack(fill='x')
@@ -30,7 +30,7 @@ class CatalogPanel:
         self.search.trace_add('write',lambda *args:self.refresh())
         self.filters={};self.filter_boxes={}
         facets=ttk.LabelFrame(parent,text='Collection filters',padding=6);facets.pack(fill='x',padx=8)
-        fields=[('manufacturer','Vendor'),('dram_manufacturer','DRAM vendor'),('memory','Memory'),('module_type','Module type'),
+        fields=[('oem_name','OEM'),('manufacturer','Vendor'),('dram_manufacturer','DRAM vendor'),('memory','Memory'),('module_type','Module type'),
                 ('capacity_mib','Capacity MiB'),('data_rate_MTps','Speed MT/s'),('ranks','Ranks'),('ecc','ECC'),
                 ('integrity','Integrity'),('hpt_present','HPT tag'),('length','Bytes'),('manufacture_year','Mfg year')]
         for i,(key,title) in enumerate(fields):
@@ -55,14 +55,14 @@ class CatalogPanel:
         ttk.Button(mining,text='Export saved families…',command=lambda:editor.run(self.export_families)).pack(side='left',padx=4)
         self.count=tk.StringVar();ttk.Label(mining,textvariable=self.count,padding=4).pack(side='right')
         table_frame=ttk.Frame(parent);table_frame.pack(fill='x',padx=8)
-        self.table=ttk.Treeview(table_frame,columns=('memory','manufacturer','part','serial','integrity'),show='headings',selectmode='extended',height=4)
-        for key,title,width in [('memory','Type',70),('manufacturer','Manufacturer',250),('part','Model',260),('serial','Serial',130),('integrity','Integrity',100)]:
+        self.table=ttk.Treeview(table_frame,columns=('memory','manufacturer','part','oem_part_number','serial','integrity'),show='headings',selectmode='extended',height=4)
+        for key,title,width in [('memory','Type',70),('manufacturer','Manufacturer',250),('part','Model',210),('oem_part_number','OEM part / HP family',190),('serial','Serial',130),('integrity','Integrity',100)]:
             self.table.heading(key,text=title); self.table.column(key,width=width)
         scroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.table.yview)
         self.table.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right',fill='y'); self.table.pack(fill='both',expand=True)
         buttons=ttk.Frame(parent,padding=8); buttons.pack(fill='x')
-        for label,callback in [('Open selected in editor',self.open_selected),('Analyze HPT family',self.analyze),('Compute HPT for editor serial',lambda:self.analyze(True)),('Prepare public submission…',self.submission)]:
+        for label,callback in [('OEM sticker details…',self.edit_oem),('Open selected in editor',self.open_selected),('Analyze HPT family',self.analyze),('Compute HPT for editor serial',lambda:self.analyze(True)),('Prepare public submission…',self.submission)]:
             ttk.Button(buttons,text=label,command=lambda cb=callback:editor.run(cb)).pack(side='left',padx=3)
         self.details=ScrolledText(parent,height=6,wrap='word',font='TkFixedFont'); self.details.pack(fill='both',expand=True,padx=8,pady=8)
         editor.set_text(self.details,'Imports preserve source files and deduplicate by SHA-256.\nPublic submission exports a reviewable bundle; no public service is configured and no data is uploaded.')
@@ -96,7 +96,7 @@ class CatalogPanel:
             except ValueError as exc:
                 self.count.set(str(exc));return
             for r in rows:
-                self.table.insert('','end',iid=r['sha256'],values=tuple(r[k] for k in ('memory','manufacturer','part','serial','integrity')))
+                self.table.insert('','end',iid=r['sha256'],values=(r['memory'],r['manufacturer'],r['part'],r.get('hp_family_part_number') or r.get('oem_part_number',''),r['serial'],r['integrity']))
             self.count.set(f'{len(rows)} shown / {len(self.catalog.rows())} total images')
 
     def selected(self):
@@ -133,13 +133,14 @@ class CatalogPanel:
 
     def add_editor(self):
         catalog=self.require(); doc=self.editor.require_document()
-        catalog.add(doc.spd.data,'editor snapshot'); self.refresh()
+        self.capture_editor(); self.refresh()
 
     def open_selected(self):
         from spd_editor import EditorDocument
         data=self.require().data(self.selected())
         if not self.editor.confirm_discard(): return
         self.editor.document=EditorDocument(data)
+        self.editor.document.catalog_oem=(str(self.catalog.root),self.selected())
         self.editor.hardware.plan=None
         self.editor.hardware.end.set(str(len(data)-1))
         self.editor.set_text(self.editor.diff,''); self.editor.refresh()
@@ -211,7 +212,42 @@ class CatalogPanel:
         from tkinter import filedialog
         records=self.require().saved_families()
         if not records:raise ValueError('No saved collection families')
-        registry={r['id']:dict(r['family'],equivalents=[r['part']],evaluation=r['evaluation'],evidence_sha256=r['evidence_sha256']) for r in records}
+        registry={r['id']:dict(r['family'],equivalents=sorted({r['part'],*(m['part_number'] for m in r.get('members',[]))}),scope=r.get('scope'),evaluation=r['evaluation'],evidence_sha256=r['evidence_sha256']) for r in records}
         path=filedialog.asksaveasfilename(parent=self.root,title='New family registry export',defaultextension='.json')
         if path:
             with Path(path).open('x',encoding='utf-8') as handle:json.dump(registry,handle,indent=2)
+
+    def capture_editor(self):
+        catalog=self.require();doc=self.editor.require_document()
+        row=catalog.add(doc.spd.data,'editor snapshot')
+        context=getattr(doc,'catalog_oem',None)
+        if context and context[0]==str(catalog.root) and context[1]!=row['sha256'] and not catalog.oem_details(row['sha256']):
+            fields=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','notes')
+            old=catalog.oem_details(context[1])
+            if old:catalog.set_oem_details(row['sha256'],{k:v for k,v in old.items() if k in fields})
+        doc.catalog_oem=(str(catalog.root),row['sha256'])
+        return row['sha256']
+
+    def edit_oem(self, for_editor=False):
+        import tkinter as tk
+        from tkinter import ttk
+        from tkinter.scrolledtext import ScrolledText
+        self.editor.hardware.idle();catalog=self.require()
+        sha=self.capture_editor() if for_editor else self.selected()
+        existing=catalog.oem_details(sha)
+        dialog=tk.Toplevel(self.root);dialog.title('OEM sticker details');dialog.geometry('720x540');dialog.transient(self.root)
+        ttk.Label(dialog,text='Manual collection metadata; raw SPD bytes are not changed.\nEntries with identical SPD bytes share these annotations.',padding=10).pack(fill='x')
+        fields=ttk.Frame(dialog,padding=8);fields.pack(fill='x');variables={}
+        for row,(key,title) in enumerate([('oem_name','OEM name (HP, HPE, Dell, Lenovo, …)'),('part_number','OEM part number'),('spare_number','Spare / replacement number'),('assembly_number','Assembly number'),('model','OEM model / product'),('hp_family_part_number','HP HPT family PN (optional)')]):
+            ttk.Label(fields,text=title).grid(row=row,column=0,sticky='w',pady=4)
+            var=tk.StringVar(value=existing.get(key,''));variables[key]=var
+            ttk.Entry(fields,textvariable=var,width=44).grid(row=row,column=1,sticky='ew',padx=8)
+        ttk.Label(dialog,text='HP/HPE HPT grouping uses the explicit family PN, or the OEM part number if omitted.\nOther OEMs retain their own details and are not treated as HP.',padding=8).pack(fill='x')
+        ttk.Label(dialog,text='Sticker notes / provenance',padding=4).pack(anchor='w')
+        notes=ScrolledText(dialog,height=5,wrap='word');notes.pack(fill='both',expand=True,padx=10);notes.insert('1.0',existing.get('notes',''))
+        def save():
+            self.editor.hardware.idle()
+            details={key:var.get() for key,var in variables.items()};details['notes']=notes.get('1.0','end-1c')
+            record=catalog.set_oem_details(sha,details)
+            self.refresh();self.editor.set_text(self.details,json.dumps(dict(sha256=sha,oem=record),indent=2));dialog.destroy()
+        ttk.Button(dialog,text='Save OEM details (blank fields clear previous values)',command=lambda:self.editor.run(save)).pack(pady=10)
