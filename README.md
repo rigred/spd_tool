@@ -98,6 +98,14 @@ target identity and exact changes, saves a full backup and requires complete
 read-back verification. See the [hardware GUI guide](docs/GUI_HARDWARE.md) and
 [external bridge setup](docs/EXTERNAL_BRIDGE.md).
 
+## SPD library
+
+The **SPD library** tab imports files or folders into a portable SQLite
+collection with readable manufacturer/model paths and hash deduplication.
+It includes HP family evidence analysis and offline public-submission bundles.
+See [Library management](docs/LIBRARY.md) and
+[Desktop release builds](docs/RELEASES.md).
+
 ## Documentation
 
 - [Command reference](docs/CLI.md): inspection, editing, donor patches,

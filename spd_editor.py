@@ -261,6 +261,10 @@ class SPDEditor:
         self.hardware_tab = ttk.Frame(book)
         book.add(self.hardware_tab, text='Hardware / programmer')
         self.hardware = HardwarePanel(self, self.hardware_tab)
+        from spd_catalog_gui import CatalogPanel
+        self.catalog_tab = ttk.Frame(book)
+        book.add(self.catalog_tab, text='SPD library')
+        self.catalog = CatalogPanel(self, self.catalog_tab)
         self.diff.configure(state='disabled')
         root.protocol('WM_DELETE_WINDOW', lambda: self.run(self.close))
         for key, action in [('<Control-o>', self.open), ('<Control-s>', self.save),
