@@ -53,6 +53,9 @@ def validate_evidence(data,evidence):
         if not isinstance(point.get('timings_cycles'),dict) or not point['timings_cycles']:raise ValueError('Tests need timings_cycles')
         for key,value in point['timings_cycles'].items():
             if key not in TIMINGS or key in ('tCKmin','tREFI') or number(value)<=0:raise ValueError('Use timing names such as tAAmin/tRCDmin, with positive cycle counts')
+    requested=set(sheet.get('timings',{}))|{key for point in points for key in point['timings_cycles']}
+    if data[2]!=11 and 'tCWLmin' in requested:raise ValueError('This CWL representation is DDR3-specific')
+    if data[2] not in (8,11) and 'tFAWmin' in requested:raise ValueError('tFAW is not part of this legacy generation model')
     return evidence
 
 
@@ -91,7 +94,7 @@ def plan_bins(data,rates,voltage='1.5',refresh_ns='7800',evidence=None,anchor_in
     result=[]
     for rate in rates:
         rate=number(rate)
-        if not 100<=rate<=10000:raise ValueError('Target data rates must be 100–10000 MT/s')
+        if not 1<=rate<=10000:raise ValueError('Target data rates must be 1–10000 MT/s')
         tck=Fraction(factor,1)/rate
         warnings=['Untested proposal: matching absolute timing minima does not establish that the chips, controller or board run at this clock.']
         violations=[]

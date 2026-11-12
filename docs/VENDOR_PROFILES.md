@@ -1,6 +1,8 @@
 # Vendor metadata and HP donor profiles
 
-Open **SPD library → Vendor data / profiles**. This tool operates on collection
+Use **OEM / factory customization** for target-centric donor selection, field merging
+and serial-specific HPT previews. **SPD library → Vendor data / profiles** remains
+available for donor-profile creation and detailed family evidence. Both operate on collection
 entries and the current editor buffer. Creating or applying a profile never
 programs hardware directly.
 
@@ -60,8 +62,10 @@ Eligibility checks require:
 - DDR3 images containing the complete HPT block; image length is never expanded.
 - The same manufacturer part number after whitespace/case normalization.
   Meaningful punctuation remains significant.
-- Matching bytes 3-116, covering module layout, geometry, timing and register
-  settings. A shared PN does not override a functional difference.
+- Matching generation, encoded geometry and buffering/wiring architecture.
+  Native timing and register supplier/revision differences are reported while
+  target settings are preserved. A shared PN does not waive an architecture or
+  geometry mismatch. Register architecture differences remain blockers.
 - Matching DRAM manufacturer IDs when both are populated.
 - Valid donor and target base integrity, plus current donor-family validation.
 
@@ -122,5 +126,8 @@ not implemented; extracting/reimporting a binary by itself cannot reconstruct
 its generation history.
 
 See also [library management](LIBRARY.md),
-[registered modules](../REGISTERED_MODULES.md), and
+[registered modules](REGISTERED_MODULES.md), and
 [GUI programming](GUI_HARDWARE.md).
+
+For operation-scoped review reasons, selective merging and reusable recipes, see
+[Engineering workbench](ENGINEERING_WORKBENCH.md).

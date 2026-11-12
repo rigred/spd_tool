@@ -151,7 +151,7 @@ a learned serial/HPT relationship, not cryptographic authenticity.
 
 Serial and part-number edits do not rewrite HPT automatically. Recompute the
 code explicitly when required. CLI registry operations are documented in the
-[command reference](docs/CLI.md#hp-family-registry).
+[command reference](CLI.md#hp-family-registry).
 
 ## SDR and DDR registered modules
 

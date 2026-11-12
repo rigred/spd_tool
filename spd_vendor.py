@@ -54,18 +54,10 @@ def vendor_metadata(data, decoded=None):
 def compatible_target(donor, target):
     if len(donor)<184 or len(target)<184 or donor[2]!=11 or target[2]!=11:
         raise ValueError('HP donor profiles require DDR3 images containing bytes 176–183')
-    d,t=SPD(donor).decoded_data,SPD(target).decoded_data
-    dp=d['manufacturing']['module_part_number'];tp=t['manufacturing']['module_part_number']
-    if not normalize(dp) or normalize(dp)!=normalize(tp):
-        raise ValueError('Donor and target manufacturer part numbers must match exactly after formatting normalization')
-    # Preserve everything in this range; also require a matching electrical layout.
-    if donor[3:117]!=target[3:117]:
-        raise ValueError('The same part number has different geometry, timings or module settings; donor profile refused')
-    dm,tm=donor[148:150],target[148:150]
-    if dm not in (b'\0\0',b'\xff\xff') and tm not in (b'\0\0',b'\xff\xff') and dm!=tm:
-        raise ValueError('DRAM manufacturer IDs differ')
-    if integrity_info(donor)['status']!='VALID' or integrity_info(target)['status']!='VALID':
-        raise ValueError('Donor and target must have valid base integrity before profiling')
+    from spd_compatibility import assess
+    report=assess(donor,target)
+    if not report['allowed']:raise ValueError('; '.join(report['hard']+['Required review: '+key for key in report['missing_overrides']]))
+    return report
 
 
 def apply_hp_template(donor, target, hpt, copy_opaque=False, replace_existing=False):

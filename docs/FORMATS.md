@@ -101,7 +101,7 @@ convention. Invalid or missing BCD dates are reported as unknown.
 DDR3 RDIMM fields follow the SSTE32882 layout when that register type is
 identified. Other register types expose raw nibbles. LRDIMM named settings
 follow the production Annex K.4 layout; pre-production revisions retain raw
-personality access. See [Registered modules](../REGISTERED_MODULES.md).
+personality access. See [Registered modules](REGISTERED_MODULES.md).
 
 XMP profiles require enabled flags, complete blocks and valid timebases.
 Revision-specific XMP extensions, DDR2 EPP and undocumented vendor regions

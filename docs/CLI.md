@@ -149,7 +149,7 @@ write the registry. See their `--help` output for required arguments.
 
 The editor uses the registry beside `spd_editor.py`. Its family matcher checks
 the modular relationship directly. Candidate computation is explicit and capped
-at 1024 results. See [HP SmartMemory](../REGISTERED_MODULES.md#hp-smartmemory)
+at 1024 results. See [HP SmartMemory](REGISTERED_MODULES.md#hp-smartmemory)
 for byte order and interpretation.
 
 ## Cataloging

@@ -13,7 +13,7 @@ from ddr3_decoder import DDR3Decoder
 
 # JEDEC memory-type byte (SPD[2])
 MEM_SDR   = 0x04   # PC SDR SDRAM (legacy 128B SPD)
-MEM_DDR1  = 0x07   # (not implemented here)
+MEM_DDR1  = 0x07
 MEM_DDR2  = 0x08
 MEM_DDR3  = 0x0B   # DDR3 (typically 256B SPD)
 
@@ -33,6 +33,9 @@ class SPD:
 
         self.decoder = self._get_decoder()
         self.decoded_data = self.decoder.decode()
+        if self.mem_type==MEM_DDR2:
+            from spd_epp import decode_epp
+            self.decoded_data["epp"]=decode_epp(self.data)
 
     def _mem_type_label(self, v: int) -> str:
         return {

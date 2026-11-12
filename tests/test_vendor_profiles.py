@@ -33,12 +33,18 @@ class VendorProfileTests(unittest.TestCase):
         self.assertEqual(reopened.vendor_profiles()[0]['id'],self.profile['id'])
 
     def test_mismatched_model_settings_crc_and_hpt_refused(self):
-        for offset in (4,16,64,128):
+        for offset in (4,128):
             raw=bytearray(self.target);raw[offset]^=1;raw=repair_integrity(raw)
             with self.assertRaises(ValueError):self.catalog.hp_profile_options(self.profile['id'],raw)
         raw=bytearray(self.target);raw[126]^=1
         with self.assertRaises(ValueError):self.catalog.hp_profile_options(self.profile['id'],raw)
         with self.assertRaises(ValueError):self.catalog.preview_hp_profile(self.profile['id'],self.target,'00000000')
+
+    def test_timing_and_register_supplier_variants_preserve_target_configuration(self):
+        for offset in (16,64):
+            raw=bytearray(self.target);raw[offset]^=1;raw=repair_integrity(raw)
+            result,report=self.catalog.preview_hp_profile(self.profile['id'],raw,'00000069')
+            self.assertEqual(result[:176],raw[:176])
 
     def test_existing_customer_data_requires_explicit_replacement(self):
         raw=bytearray(self.target);raw[176:180]=b'XMP!'

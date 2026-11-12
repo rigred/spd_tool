@@ -24,6 +24,12 @@ class CatalogPanel:
         for label,callback in [('Open / create collection…',self.choose),('Add SPD files…',self.import_files),('Import folder…',self.import_folder),('Add editor image',self.add_editor),('Editor OEM details…',lambda:self.edit_oem(True))]:
             ttk.Button(top,text=label,command=lambda cb=callback:editor.run(cb)).pack(side='left',padx=3)
         ttk.Label(parent,textvariable=self.location,padding=8).pack(fill='x')
+        preferences=ttk.Frame(parent,padding=6);preferences.pack(fill='x')
+        self.autoload=tk.BooleanVar(value=False)
+        ttk.Checkbutton(preferences,text='Load this collection at startup',variable=self.autoload).pack(side='left')
+        ttk.Button(preferences,text='Save catalog preferences',command=lambda:editor.run(self.save_settings)).pack(side='left',padx=6)
+        ttk.Button(preferences,text='Refresh source files / index',command=lambda:editor.run(self.refresh_sources)).pack(side='left',padx=6)
+
         search=ttk.Frame(parent,padding=8); search.pack(fill='x')
         ttk.Label(search,text='Search manufacturer, model, serial or hash:').pack(side='left')
         ttk.Entry(search,textvariable=self.search,width=45).pack(side='left',padx=8)
@@ -77,7 +83,34 @@ class CatalogPanel:
         self.editor.hardware.idle()
         path=filedialog.askdirectory(parent=self.root,title='Open or create SPD collection')
         if path:
-            self.catalog=Catalog(path); self.location.set(str(self.catalog.root)); self.refresh()
+            self.catalog=Catalog(path); self.location.set(str(self.catalog.root)); self.refresh();self.save_settings()
+
+    def save_settings(self):
+        from spd_settings import save
+        settings=dict(catalog_path=str(self.require().root),autoload=self.autoload.get(),filters={k:v.get() for k,v in self.filters.items()},search=self.search.get(),sort=self.sort.get(),year_from=self.year_from.get(),year_to=self.year_to.get())
+        save(settings);self.location.set(str(self.catalog.root)+' — preferences saved')
+
+    def restore_settings(self):
+        from spd_settings import load
+        settings=load();self.autoload.set(settings.get('autoload') is True)
+        path=settings.get('catalog_path')
+        if not path:return
+        if not self.autoload.get():self.location.set('Saved collection: '+path+' (automatic loading disabled)');return
+        if not (Path(path)/'library.sqlite3').is_file():self.location.set('Saved collection unavailable: '+path);return
+        def done(catalog):
+            self.catalog=catalog
+            for k,var in self.filters.items():var.set(settings.get('filters',{}).get(k,'All'))
+            for key in ('sort','year_from','year_to','search'):
+                if isinstance(settings.get(key),str):getattr(self,key).set(settings[key])
+            self.location.set(str(catalog.root));self.refresh()
+        self.editor.hardware.start_job('Loading saved SPD collection…',lambda:Catalog(path),done)
+
+    def refresh_sources(self):
+        catalog=self.require()
+        def done(result):
+            self.refresh();self.location.set(f"{catalog.root} — checked {result['checked']} source files; {len(result['errors'])} errors, {len(result['missing'])} unavailable paths")
+            self.editor.set_text(self.details,json.dumps(result,indent=2))
+        self.editor.hardware.start_job('Refreshing immutable source snapshots…',catalog.refresh_sources,done)
 
     def clear_filters(self):
         for var in self.filters.values():var.set('All')
@@ -99,6 +132,7 @@ class CatalogPanel:
             for r in rows:
                 self.table.insert('','end',iid=r['sha256'],values=(r['memory'],r['manufacturer'],r['part'],r.get('hp_family_part_number') or r.get('oem_part_number',''),r['serial'],r['integrity']))
             self.count.set(f'{len(rows)} shown / {len(self.catalog.rows())} total images')
+            if hasattr(self.editor,'factory'):self.editor.factory.refresh()
 
     def selected(self):
         self.require()
@@ -145,6 +179,7 @@ class CatalogPanel:
         source=next(r for r in self.catalog.rows() if r['sha256']==self.selected())
         if source.get('vendor_profile_application'):
             self.editor.document.vendor_profile_application=source['vendor_profile_application']
+            self.editor.document.engineering_history=json.loads(json.dumps(source['vendor_profile_application'].get('engineering_history',[])))
         self.editor.hardware.plan=None
         self.editor.hardware.end.set(str(len(data)-1))
         self.editor.set_text(self.editor.diff,''); self.editor.refresh()
@@ -229,10 +264,11 @@ class CatalogPanel:
             if report['result_sha256']!=row['sha256']:
                 from spd_vendor import sha256
                 report=dict(report,result_sha256=sha256(doc.spd.data),modified_after_profile=True)
+            report=dict(report,engineering_history=doc.engineering_history)
             catalog.mark_profile_generated(row['sha256'],report)
         context=getattr(doc,'catalog_oem',None)
         if context and context[0]==str(catalog.root) and context[1]!=row['sha256'] and not catalog.oem_details(row['sha256']):
-            fields=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','notes')
+            fields=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','dram_chip_part_number','pcb_revision','register_part_number','notes')
             old=catalog.oem_details(context[1])
             if old:catalog.set_oem_details(row['sha256'],{k:v for k,v in old.items() if k in fields})
         doc.catalog_oem=(str(catalog.root),row['sha256'])
@@ -245,10 +281,10 @@ class CatalogPanel:
         self.editor.hardware.idle();catalog=self.require()
         sha=self.capture_editor() if for_editor else self.selected()
         existing=catalog.oem_details(sha)
-        dialog=tk.Toplevel(self.root);dialog.title('OEM sticker details');dialog.geometry('720x540');dialog.transient(self.root)
+        dialog=tk.Toplevel(self.root);dialog.title('OEM sticker details');dialog.geometry('800x700');dialog.transient(self.root)
         ttk.Label(dialog,text='Manual collection metadata; raw SPD bytes are not changed.\nEntries with identical SPD bytes share these annotations.',padding=10).pack(fill='x')
         fields=ttk.Frame(dialog,padding=8);fields.pack(fill='x');variables={}
-        for row,(key,title) in enumerate([('oem_name','OEM name (HP, HPE, Dell, Lenovo, …)'),('part_number','OEM part number'),('spare_number','Spare / replacement number'),('assembly_number','Assembly number'),('model','OEM model / product'),('hp_family_part_number','HP HPT family PN (optional)')]):
+        for row,(key,title) in enumerate([('oem_name','OEM name (HP, HPE, Dell, Lenovo, …)'),('part_number','OEM part number'),('spare_number','Spare / replacement number'),('assembly_number','Assembly number'),('model','OEM model / product'),('hp_family_part_number','HP HPT family PN (optional)'),('dram_chip_part_number','DRAM chip part number (observed)'),('pcb_revision','PCB revision (observed)'),('register_part_number','Register IC part number (observed)')]):
             ttk.Label(fields,text=title).grid(row=row,column=0,sticky='w',pady=4)
             var=tk.StringVar(value=existing.get(key,''));variables[key]=var
             ttk.Entry(fields,textvariable=var,width=44).grid(row=row,column=1,sticky='ew',padx=8)

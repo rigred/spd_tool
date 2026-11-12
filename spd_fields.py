@@ -285,3 +285,59 @@ def registered_warnings(data):
             for i in range(90,96,2):
                 if (data[i]&127)>(data[i+1]&127):result.append(f'LRDIMM minimum delay exceeds maximum at bytes {i}-{i+1}')
     return result
+
+# Shared standard descriptors supplement the detailed registered-module tables.
+_module_specific_fields = module_fields
+
+def module_fields(data):
+    fields=_module_specific_fields(data);known={f.key for f in fields};mem=data[2]
+    def add(key,label,off,shift=0,bits=8,choices=None,group='Standard organization',**kw):
+        if key not in known and off<len(data):
+            fields.append(Field(key,group,label,off,shift,bits,choices=choices,**kw));known.add(key)
+    if mem in (4,7,8):
+        add('total_width_low','Module width, low byte',6)
+        add('total_width_high','Module width, high byte',7)
+        add('ecc_device_width','Error-check device width',14)
+        add('burst_bitmap','Burst lengths supported bitmap',16,group='Standard capabilities',note='Bit positions describe supported burst lengths; consult the generation layout before changing capabilities.')
+        add('revision_low','Module revision low',91,group='Manufacturing')
+        add('revision_high','Module revision high',92,group='Manufacturing')
+        add('manufacturing_location','Manufacturing location',72,group='Manufacturing')
+        add('manufacturing_year','Manufacturing year BCD',93,group='Manufacturing',note='BCD year, raw encoding')
+        add('manufacturing_week','Manufacturing week BCD',94,group='Manufacturing',note='BCD week, raw encoding')
+    if mem==8:
+        add('row_bits','Row address bits',3,0,4,choices={i:str(i) for i in range(12,17)})
+        add('column_bits','Column address bits',4,0,4,choices={i:str(i) for i in range(8,13)})
+        add('rank_count','Rank count code',5,0,3,choices={i:str(i+1) for i in range(8)})
+        add('package','DRAM package type',5,4,1,choices={0:'Planar',1:'Stacked'})
+        add('height','Module height code',5,5,3)
+        add('voltage','Voltage interface',8,choices={5:'SSTL 1.8 V'})
+        add('configuration','Error checking',11,0,2,choices={0:'None',1:'Parity',2:'ECC',3:'Parity + ECC'})
+        add('self_refresh','Self refresh',12,7,1,choices=BOOL)
+        add('refresh','Refresh interval',12,0,7,choices={0:'15.625 us',1:'3.9 us',2:'7.8 us',3:'31.3 us',4:'62.5 us',5:'125 us'})
+        add('device_width','Primary device width',13,choices={i:f'x{i}' for i in (4,8,16,32)})
+        add('device_banks','Banks per device',17,choices={4:'4',8:'8'})
+        add('module_type','Module architecture',20,choices={1:'RDIMM',2:'UDIMM',4:'SO-DIMM',8:'Micro-DIMM',16:'Mini-RDIMM',32:'Mini-UDIMM'})
+        for c in range(2,7):add(f'cas_{c}',f'CAS {c} supported',18,c,1,choices=BOOL,group='Standard capabilities')
+        add('module_attributes','Module attributes bitmap',21,group='Register / module attributes',note='Physical attributes; do not infer register IC settings from another generation.')
+        add('device_attributes','Device attributes bitmap',22,group='Standard capabilities')
+        add('rank_density','Rank density bitmap',31)
+        for key,off in [('tRP',27),('tRRD',28),('tRCD',29),('tRAS',30),('tWR',36),('tWTR',37),('tRTP',38)]:
+            add(key,key,off,group='Native timings',unit='ns',scale=1 if off==30 else .25)
+    if mem==11:
+        add('module_type','Module architecture',3,0,4,choices={1:'RDIMM',2:'UDIMM',3:'SO-DIMM',5:'Mini-RDIMM',9:'72b SO-RDIMM',11:'LRDIMM'})
+        add('density_code','DRAM density',4,0,4,choices={i:f'{256*(1<<i)} Mbit' for i in range(7)})
+        add('bank_code','Bank address bits code',4,4,3,choices={0:'3 bank bits (8 banks)'})
+        add('column_bits','Column address bits code',5,0,3,choices={i:str(i+9) for i in range(4)})
+        add('row_bits','Row address bits code',5,3,3,choices={i:str(i+12) for i in range(5)})
+        add('rank_count_code','Rank count',7,3,3,choices={i:str(i+1) for i in range(8)})
+        add('device_width_code','Device width',7,0,3,choices={i:f'x{4<<i}' for i in range(4)})
+        add('primary_width_code','Primary bus width',8,0,3,choices={i:str(8<<i) for i in range(4)})
+        add('ecc_width_code','ECC width',8,3,2,choices={0:'None',1:'8 bits'})
+        for bit,label in [(0,'1.5 V not operable'),(1,'1.35 V operable'),(2,'1.25 V operable')]:add(f'voltage_{bit}',label,6,bit,1,choices=BOOL,group='Standard capabilities')
+        add('package_type','SDRAM package type',33,7,1,choices={0:'Standard monolithic',1:'Nonstandard'},group='Standard organization')
+        add('package_die_count','Package die-count code',33,4,3,choices={0:'Not specified',1:'Single die',2:'2 dies',3:'4 dies',4:'8 dies'},group='Standard organization')
+        add('package_loading','Package signal loading',33,2,2,choices={0:'Not specified',1:'Multiple loads',2:'Single load'},group='Standard organization')
+        for key,off,bit,label in [('dll_off',30,7,'DLL-off support'),('rzq7',30,1,'RZQ/7 supported'),('rzq6',30,0,'RZQ/6 supported'),('pasr',31,7,'Partial-array self refresh'),('odts',31,3,'ODTS readout'),('asr',31,2,'Automatic self refresh'),('temp_refresh',31,1,'Extended-temperature 1x refresh'),('temp_range',31,0,'Extended temperature range'),('thermal_sensor',32,7,'Thermal sensor present')]:add(key,label,off,bit,1,choices=BOOL,group='Standard capabilities')
+        for key,label,off,shift,bits in [('height_code','Module height code',60,0,5),('thickness_front','Front thickness code',61,0,4),('thickness_back','Back thickness code',61,4,4),('raw_card_code','Reference raw-card code',62,0,5),('raw_card_bank','Reference raw-card bank',62,7,1),('raw_card_revision','Raw-card revision',62,5,2)]:add(key,label,off,shift,bits,group='Module mechanics')
+        for key,off in [('manufacturing_location',119),('manufacturing_year',120),('manufacturing_week',121),('module_revision',146),('dram_stepping',147)]:add(key,key.replace('_',' ').title(),off,group='Manufacturing')
+    return fields

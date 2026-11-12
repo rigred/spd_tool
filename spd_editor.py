@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import sqlite3
 from spd_library import SPD, load_spd_file, hexdiff
 from spd_integrity import repair_integrity
 from spd_fields import module_fields, field_by_key, edit_field
@@ -21,6 +22,15 @@ class EditorDocument:
         self.undo_stack = []
         self.redo_stack = []
         self._vendor_profile_provenance = {}
+        self.engineering_history = []
+
+    def record_engineering(self, report):
+        from datetime import datetime,timezone
+        report=dict(report,recorded_at=datetime.now(timezone.utc).isoformat())
+        if report.get('result_sha256')!=hashlib.sha256(self.spd.data).hexdigest():raise ValueError('Audit result hash mismatch')
+        if self.engineering_history and all(self.engineering_history[-1].get(k)==report.get(k) for k in ('target_sha256','result_sha256')):
+            self.engineering_history[-1].update(report)
+        else:self.engineering_history.append(report)
 
     @property
     def vendor_profile_application(self):
@@ -48,7 +58,9 @@ class EditorDocument:
                 self._vendor_profile_provenance[sha]=dict(report,result_sha256=sha,modified_after_profile=True)
             self.undo_stack.append(self.spd.data)
             self.redo_stack.clear()
+            old=self.spd.data
             self.spd = candidate
+            self.record_engineering(dict(operation="Edit image",target_sha256=hashlib.sha256(old).hexdigest(),result_sha256=sha,changes=[dict(offset=i,before=a,after=b) for i,a,b in hexdiff(old,candidate.data)]))
 
     def edit(self, offset, values):
         values = bytes(values)
@@ -204,8 +216,12 @@ class SPDEditor:
         ttk.Checkbutton(root, text='Repair checksum / CRC on save', variable=self.fix_on_save).pack(anchor='w', padx=12)
         self.status = tk.StringVar(value='Open a binary or hex-text SPD image to begin.')
         ttk.Label(root, textvariable=self.status, padding=8).pack(fill='x')
-        book = ttk.Notebook(root)
-        book.pack(fill='both', expand=True, padx=10, pady=5)
+        workspace=ttk.Frame(root);workspace.pack(fill='both',expand=True,padx=10,pady=5)
+        self.navigation=tk.Listbox(workspace,width=25,background='#14283F',foreground='white',selectbackground='#24669D',font=('DejaVu Sans',10),borderwidth=0,highlightthickness=0,exportselection=False)
+        self.navigation.pack(side='left',fill='y',padx=(0,8))
+        style=ttk.Style(root);style.layout('Workbench.TNotebook.Tab',[])
+        book = ttk.Notebook(workspace,style='Workbench.TNotebook')
+        book.pack(fill='both', expand=True)
         self.overview_tab=ttk.Frame(book)
         book.add(self.overview_tab,text='Overview')
         self._build_overview(self.overview_tab)
@@ -233,7 +249,7 @@ class SPDEditor:
             ttk.Button(edits, text=label, command=lambda f=cb: self.run(f)).pack(side='left', padx=3)
         module_tab = ttk.Frame(book)
         self.module_tab=module_tab
-        book.add(module_tab, text='Registers / buffers')
+        book.add(module_tab, text='SPD field editor')
         filters = ttk.Frame(module_tab,padding=6)
         filters.pack(fill='x')
         self.field_group = tk.StringVar(value='All groups')
@@ -263,6 +279,8 @@ class SPDEditor:
         buttons.pack(fill='x')
         ttk.Button(buttons,text='Edit selected setting...',command=lambda:self.run(self.edit_module_field)).pack(side='left')
         ttk.Button(buttons,text='Copy module settings from file...',command=lambda:self.run(self.copy_module_settings)).pack(side='left',padx=8)
+        ttk.Button(buttons,text='Part number…',command=lambda:self.run(self.edit_part)).pack(side='left',padx=4)
+        ttk.Button(buttons,text='Serial number…',command=lambda:self.run(self.edit_serial)).pack(side='left',padx=4)
         hp_tab=ttk.Frame(book)
         book.add(hp_tab,text='HP SmartMemory')
         self.hp_text=ScrolledText(hp_tab,wrap='word',font='TkFixedFont')
@@ -282,6 +300,28 @@ class SPDEditor:
         self.catalog_tab = ttk.Frame(book)
         book.add(self.catalog_tab, text='SPD library')
         self.catalog = CatalogPanel(self, self.catalog_tab)
+        from spd_workbench_gui import FactoryPanel,PerformancePanel,TimingPanel,HistoryPanel
+        self.factory_tab=ttk.Frame(book);book.add(self.factory_tab,text='OEM / factory customization')
+        self.factory=FactoryPanel(self,self.factory_tab)
+        self.timing_tab=ttk.Frame(book);book.add(self.timing_tab,text='Timing analysis')
+        self.timing=TimingPanel(self,self.timing_tab)
+        self.performance_tab=ttk.Frame(book);book.add(self.performance_tab,text='Performance profiles')
+        self.performance=PerformancePanel(self,self.performance_tab)
+        self.history_tab=ttk.Frame(book);book.add(self.history_tab,text='Operation history');self.history=HistoryPanel(self,self.history_tab)
+        for index,tab in enumerate((self.overview_tab,self.module_tab,raw,self.catalog_tab,self.factory_tab,self.performance_tab,self.timing_tab,self.diff,self.hardware_tab,self.history_tab,hp_tab,decoded)):book.insert(index,tab)
+        for tab in book.tabs():self.navigation.insert('end','OEM / factory' if tab==str(self.factory_tab) else book.tab(tab,'text'))
+        self.navigation.selection_set(0)
+        self.navigation.bind('<<ListboxSelect>>',lambda event:book.select(book.tabs()[self.navigation.curselection()[0]]) if self.navigation.curselection() else None)
+        def sync_navigation(event):
+            if book.select():
+                index=book.index(book.select());self.navigation.selection_clear(0,'end');self.navigation.selection_set(index)
+        book.bind('<<NotebookTabChanged>>',sync_navigation)
+        self._settings_job=self.root.after_idle(self.catalog.restore_settings)
+        def cancel_deferred(event):
+            if event.widget is root:
+                try:root.after_cancel(self._settings_job)
+                except tk.TclError:pass
+        root.bind('<Destroy>',cancel_deferred,add='+')
         self.diff.configure(state='disabled')
         root.protocol('WM_DELETE_WINDOW', lambda: self.run(self.close))
         for key, action in [('<Control-o>', self.open), ('<Control-s>', self.save),
@@ -306,7 +346,7 @@ class SPDEditor:
         style.configure('Card.TFrame',background='white',relief='solid',borderwidth=1)
         style.configure('Card.TLabel',background='white',foreground='#22364D')
         style.configure('Section.TLabel',background='white',foreground='#135FAB',font=('DejaVu Sans',11,'bold'))
-        style.configure('Metric.TLabel',background='white',foreground='#14283F',font=('DejaVu Sans',17,'bold'))
+        style.configure('Metric.TLabel',background='white',foreground='#14283F',font=('DejaVu Sans',15,'bold'))
         style.configure('Muted.TLabel',background='white',foreground='#62758B')
 
     def _build_overview(self,parent):
@@ -346,7 +386,7 @@ class SPDEditor:
             for row,label in enumerate(labels,1):
                 ttk.Label(card,text=label,style='Muted.TLabel').grid(row=row,column=0,sticky='nw',padx=(0,14),pady=3)
                 variable=tk.StringVar(value='--');self.overview_values[(section,label)]=variable
-                ttk.Label(card,textvariable=variable,style='Card.TLabel',wraplength=330).grid(row=row,column=1,sticky='nw',pady=3)
+                ttk.Label(card,textvariable=variable,style='Card.TLabel',wraplength=190).grid(row=row,column=1,sticky='nw',pady=3)
         lower=ttk.Frame(body);lower.pack(fill='x')
         for index in (0,1):lower.columnconfigure(index,weight=1,uniform='tables')
         self.overview_trees={}
@@ -441,7 +481,7 @@ class SPDEditor:
         from tkinter import messagebox
         try:
             callback()
-        except (OSError, ValueError, NotImplementedError, UnicodeError) as exc:
+        except (OSError, ValueError, NotImplementedError, UnicodeError, sqlite3.Error) as exc:
             messagebox.showerror('SPD Editor', str(exc), parent=self.root)
 
     def require_document(self):
@@ -519,6 +559,9 @@ class SPDEditor:
             self.bytes_view.selection_set(selected[0])
             self.bytes_view.see(selected[0])
 
+        for name in ('factory','performance','history'):
+            if hasattr(self,name):getattr(self,name).refresh()
+
     def refresh_module_fields(self):
         if not self.document:return
         self.module_view.delete(*self.module_view.get_children())
@@ -593,9 +636,10 @@ class SPDEditor:
             self.refresh()
 
     def edit_xmp(self):
-        from spd_xmp_gui import XMPDialog
         self.require_document()
-        return XMPDialog(self)
+        self.book.select(self.performance_tab)
+        self.performance.book.select(self.performance.xmp_page)
+        return self.performance.xmp
 
     def compute_hpt(self):
         import tkinter as tk

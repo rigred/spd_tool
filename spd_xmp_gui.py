@@ -15,9 +15,11 @@ def digest(data):return hashlib.sha256(data).hexdigest()
 
 
 class XMPDialog:
-    def __init__(self,editor):
+    def __init__(self,editor,parent=None):
         self.editor=editor;self.root=editor.root;self.preview=None;self.evidence={};self.plans=[];self.proposal_lineage=None
-        self.dialog=tk.Toplevel(self.root);self.dialog.title('DDR3 XMP / timing planner');self.dialog.geometry('1100x880');self.dialog.transient(self.root)
+        if parent is None:
+            self.dialog=tk.Toplevel(self.root);self.dialog.title('DDR3 XMP / timing planner');self.dialog.geometry('1100x880');self.dialog.transient(self.root)
+        else:self.dialog=parent
         book=ttk.Notebook(self.dialog);book.pack(fill='both',expand=True)
         profiles=ttk.Frame(book);planner=ttk.Frame(book);book.add(profiles,text='DDR3 XMP profiles');book.add(planner,text='Timing-bin planner (SDR through DDR3)')
         self.book=book;self.profile_page=profiles
@@ -73,6 +75,8 @@ class XMPDialog:
         self.table.bind('<<TreeviewSelect>>',lambda event:self.show_plan())
         tools=ttk.Frame(planner,padding=8);tools.pack(fill='x')
         ttk.Button(tools,text='Use selected proposal in XMP editor',command=lambda:self.safe(self.use_plan)).pack(side='left',padx=3)
+        ttk.Button(tools,text='Analyze proposal',command=lambda:self.safe(self.analyze_plan)).pack(side='left',padx=3)
+        ttk.Button(tools,text='Preview native SPD proposal',command=lambda:self.safe(self.native_plan)).pack(side='left',padx=3)
         ttk.Button(tools,text='Export proposals JSON…',command=lambda:self.safe(self.export_plans)).pack(side='left',padx=3)
         self.plan_text=ScrolledText(planner,height=12,wrap='word',font='TkFixedFont');self.plan_text.pack(fill='both',expand=True,padx=8,pady=8)
         self.editor.set_text(self.plan_text,'Any faster-clock proposal is untested until validated on the intended module/platform.\nEnter refresh requirements for the intended temperature; 7800 ns is an operator default, not a datasheet assertion.')
@@ -132,7 +136,7 @@ class XMPDialog:
             self.preview=None;raise ValueError('Image or profile changed; preview again')
         if not report['changes']:raise ValueError('No changes to apply')
         if not messagebox.askyesno('Apply custom XMP',f"Apply {len(report['changes'])} byte changes to the editor?\n\nThis is an untested profile, not a certified speed bin.\nExisting JEDEC settings are retained. Hardware programming is separate.",parent=self.dialog,default='no'):return
-        doc.replace(encoded);doc.vendor_profile_application=report
+        doc.replace(encoded);doc.vendor_profile_application=report;doc.record_engineering(dict(report,operation='DDR3 XMP edit'))
         self.editor.refresh();self.preview=None
         self.editor.set_text(self.output,'Applied as one undoable editor operation. Save As or archive the generated snapshot, then use the separate hardware review to program it.\n\n'+json.dumps(report,indent=2))
 
@@ -172,7 +176,7 @@ class XMPDialog:
         self.editor.set_text(self.plan_text,json.dumps(self.evidence,indent=2))
 
     def edit_evidence(self):
-        dialog=tk.Toplevel(self.dialog);dialog.title('Timing evidence JSON');dialog.geometry('850x650');dialog.transient(self.dialog)
+        dialog=tk.Toplevel(self.dialog);dialog.title('Timing evidence JSON');dialog.geometry('850x650');dialog.transient(self.root)
         ttk.Label(dialog,text='Enter transcribed datasheet constraints and/or user-reported tests.\nUse canonical timing names (tAAmin for CL cycles). The module hash must match the intended image.',padding=8).pack(fill='x')
         text=ScrolledText(dialog,wrap='none',font='TkFixedFont');text.pack(fill='both',expand=True,padx=8)
         text.insert('1.0',json.dumps(self.evidence or evidence_template(self.data()),indent=2))
@@ -214,3 +218,19 @@ class XMPDialog:
         self.evidence={};self.plans=[];self.preview=None
         self.anchor_picker.configure(values=('JEDEC SPD',));self.anchor.set('JEDEC SPD');self.datasheet_anchor.set(False)
         self.table.delete(*self.table.get_children());self.editor.set_text(self.plan_text,'External evidence cleared.')
+
+    def analyze_plan(self):
+        from spd_timing_analysis import configuration
+        row=self.selected_plan();config=configuration(self.data());config['label']=row['anchor']+' / extrapolated'
+        config['parameters'].update({k.removesuffix('min'):v for k,v in row['timings_ns'].items() if k.endswith('min')})
+        config['parameters']['tCK']=row['timings_ns']['tCKmin'];config['parameters']['CL']=row['cycles']['tAAmin']
+        self.editor.timing.use(config);self.editor.book.select(self.editor.timing_tab)
+
+    def native_plan(self):
+        from spd_native import encode_native,native_timings
+        row=self.selected_plan()
+        if row['violations']:raise ValueError('; '.join(row['violations']))
+        timings={k:v for k,v in row['timings_ns'].items() if k in native_timings(self.data())}
+        data=encode_native(self.data(),timings,[row['cycles']['tAAmin']])
+        self.editor.performance.preview.set(data,dict(operation='Generated native timing proposal',proposal=row,evidence=self.evidence,classification='extrapolated; not hardware verified'))
+        self.editor.book.select(self.editor.performance_tab);self.editor.performance.book.select(self.editor.performance.native_page)

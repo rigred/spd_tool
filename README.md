@@ -14,8 +14,8 @@ and unpacked UEFI sections, including low-power memory signatures.
 | --- | --- | --- | --- |
 | SDR SDRAM | Yes | Yes | Geometry, timings, capabilities, register/buffer attributes |
 | DDR SDRAM (DDR1) | Yes | Yes | Geometry, timings, capabilities, register/buffer attributes |
-| DDR2 SDRAM | Yes | Yes | Raw byte editing |
-| DDR3 SDRAM | Yes | Yes | RDIMM and LRDIMM organization, mechanics, register/buffer settings |
+| DDR2 SDRAM | Yes | Yes | Organization, capabilities, native timings and full/abbreviated UDIMM EPP |
+| DDR3 SDRAM | Yes | Yes | Standard organization, native timings, XMP, RDIMM/LRDIMM register/buffer settings |
 
 DDR3 support includes JEDEC timings, XMP profiles, manufacturing data and HP
 HPT blocks. Reserved and vendor-specific bytes remain accessible in the byte
@@ -60,8 +60,10 @@ partial images and checksum coverage.
 
 The Tk editor opens on a structured module overview with identity, capacity,
 organization, timing limits, operating profiles and integrity diagnostics.
-It also provides decoded JSON, a byte table, named register/buffer
-fields, HP SmartMemory tools and image comparison. Double-click a byte or
+Dedicated pages provide a generation-aware field editor, byte editor, OEM/factory
+customization, performance profiles, interactive timing analysis, operation history,
+HP SmartMemory tools and image comparison. Decoded JSON remains available for
+advanced inspection. Double-click a byte or
 module setting to edit it. The register view supports group and text filters;
 **Show raw control/personality words** exposes expert fields. Edits support
 undo/redo. Save writes a binary image and repairs its checksum/CRC by default.
@@ -93,16 +95,17 @@ Register values depend on the board layout, component revision and DRAM
 loading. Firmware may override SPD register words. A valid checksum establishes
 image integrity; it does not establish electrical compatibility or successful
 memory training. EEPROM programming is available in the editor's
-**Hardware / programmer** tab and through `spd_smbus.py`. The GUI presents
+**Hardware / programmer** page and through `spd_smbus.py`. The GUI presents
 target identity and exact changes, saves a full backup and requires complete
 read-back verification. See the [hardware GUI guide](docs/GUI_HARDWARE.md) and
 [external bridge setup](docs/EXTERNAL_BRIDGE.md).
 
 ## SPD library
 
-The **SPD library** tab imports files or folders into a portable SQLite
+The **SPD library** page imports files or folders into a portable SQLite
 collection with readable manufacturer/model paths and hash deduplication.
-It includes HP family evidence analysis and offline public-submission bundles.
+It includes HP family evidence analysis, reusable multi-donor merge recipes, optional
+startup loading, source refresh and offline public-submission bundles.
 See [Library management](docs/LIBRARY.md) and
 [Desktop release builds](docs/RELEASES.md). Vendor observations and reviewed
 [HP donor profiles](docs/VENDOR_PROFILES.md) support matching generic modules
@@ -110,17 +113,29 @@ while preserving their serials and original hardware configuration.
 
 ## XMP and timing proposals
 
-The Byte editor's **XMP / timing planner** mode edits DDR3 XMP profiles or
-creates new ones, with per-byte review and undo. The timing planner generates
+**Performance profiles** provides native SPD timing editors for all four families,
+DDR2 full/abbreviated EPP authoring and DDR3 XMP editing/creation. The native page
+includes an acknowledged XMP-to-primary timing conversion preview. **Timing
+analysis** displays editable command timelines and configuration comparisons. The timing planner generates
 faster-clock proposals for SDR through DDR3 from SPD anchors, user-reported
 tests and manually transcribed chip-datasheet constraints. Generated values
-remain untested proposals. See [XMP and timing planning](docs/XMP_TIMING_PLANNER.md).
+remain untested proposals. See [Engineering workbench](docs/ENGINEERING_WORKBENCH.md),
+[feature coverage](docs/COVERAGE.md) and [XMP and timing planning](docs/XMP_TIMING_PLANNER.md).
+
+![Interactive timing analysis with a pinned comparison](docs/images/timing-analysis.png)
+
+The diagram above uses a synthetic SPD fixture; it illustrates command constraints,
+not a measured hardware result.
 
 ## Documentation
 
+- [Engineering workbench](docs/ENGINEERING_WORKBENCH.md): compatibility, multi-donor
+  composition, native/EPP/XMP previews, timing diagrams and catalog preferences.
+- [Coverage matrix](docs/COVERAGE.md): generation-specific scope and validation boundaries.
+
 - [Command reference](docs/CLI.md): inspection, editing, donor patches,
   cataloging, conversion and hardware access.
-- [Registered modules](REGISTERED_MODULES.md): DDR3 RDIMM/LRDIMM fields,
+- [Registered modules](docs/REGISTERED_MODULES.md): DDR3 RDIMM/LRDIMM fields,
   personality mappings, legacy registered modules and HP SmartMemory.
 - [Image formats](docs/FORMATS.md): offsets, integrity checks, timing units,
   manufacturing IDs and format boundaries.

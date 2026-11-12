@@ -76,6 +76,7 @@ class Catalog:
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS merge_recipes (id TEXT PRIMARY KEY, name TEXT NOT NULL, record TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS images (sha TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, metadata TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS vendor_profiles (id TEXT PRIMARY KEY, record TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS generated_images (sha TEXT PRIMARY KEY, provenance TEXT NOT NULL)')
@@ -187,7 +188,7 @@ class Catalog:
 
     def set_oem_details(self, sha, details):
         self.data(sha)  # Only annotate a verified collection entry.
-        allowed=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','notes')
+        allowed=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','dram_chip_part_number','pcb_revision','register_part_number','notes')
         if set(details)-set(allowed):raise ValueError('Unknown OEM detail field')
         cleaned={}
         for key,value in details.items():
@@ -416,6 +417,32 @@ class Catalog:
         if not report.get('generated') or report.get('result_sha256')!=sha256(data):
             raise ValueError('Generated-image provenance does not match this image')
         with self.connect() as db:db.execute('INSERT OR REPLACE INTO generated_images VALUES (?,?)',(sha,json.dumps(report)))
+
+    def save_recipe(self,name,bundle):
+        from spd_merge import replay,digest
+        recipe=bundle['recipe'];sources={k:bytes.fromhex(v) for k,v in bundle['sources'].items()}
+        if 'target_hex' in bundle:
+            target=bytes.fromhex(bundle['target_hex'])
+            if digest(target)!=recipe['target_sha256']:raise ValueError('Recipe target hash mismatch')
+        else:target=self.data(recipe['target_sha256'])
+        rebuilt=replay(target,recipe,sources)
+        self.add(target,'merge recipe original target')
+        for sha,data in sources.items():self.add(data,'merge recipe donor')
+        generated=self.add(rebuilt['data'],'merge recipe generated result')
+        self.mark_profile_generated(generated['sha256'],dict(kind='engineering-merge',generated=True,target_sha256=digest(target),result_sha256=generated['sha256'],recipe=recipe))
+        record=json.dumps(bundle,sort_keys=True);key=digest(record.encode())
+        with self.connect() as db:db.execute('INSERT OR REPLACE INTO merge_recipes VALUES (?,?,?)',(key,str(name),record))
+        return key
+
+    def recipes(self):
+        with self.connect() as db:return [dict(id=r['id'],name=r['name'],bundle=json.loads(r['record'])) for r in db.execute('SELECT * FROM merge_recipes ORDER BY name')]
+
+    def refresh_sources(self):
+        # Original source paths are observations. Changed files become new immutable images.
+        with self.connect() as db:paths=[r['source'] for r in db.execute('SELECT DISTINCT source FROM sources')]
+        existing=[Path(p) for p in paths if Path(p).is_file()]
+        rows,errors=self.import_files(existing)
+        return dict(checked=len(existing),images=len(rows),errors=errors,missing=[p for p in paths if not Path(p).is_file()])
 
     def export_submission(self, hashes, destination):
         hashes = sorted(set(hashes))

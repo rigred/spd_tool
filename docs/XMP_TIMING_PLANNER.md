@@ -1,7 +1,7 @@
 # DDR3 XMP editor and timing-bin planner
 
-Open an SPD in the editor, select **Byte editor**, then choose
-**XMP / timing planner**. The dialog has a DDR3 XMP authoring page and a separate
+Open **Performance profiles → XMP / evidence / timing-bin planner**.
+The integrated editor has a DDR3 XMP authoring page and a separate
 proposal planner for the supported SDR, DDR, DDR2 and DDR3 families. Neither
 page changes a running memory controller or programs hardware.
 
@@ -188,3 +188,15 @@ cannot retain this metadata; preserve the report/manifest when sharing it.
 - [U-Boot's DDR3 controller implementation](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/fsl/ctrl_regs.c)
   provides the reference CWL period ranges used by the planner. It is not a
   substitute for the target chip/controller datasheets.
+
+
+## Native conversion and interactive analysis
+
+**Analyze proposal** opens the shared Timing Analysis page. **Preview native SPD
+proposal** translates the selected proposal into the loaded generation's native
+fields; illegal CAS values and unrepresentable timings are refused. The native
+page's **Danger Zone** translates enabled DDR3 XMP slots into primary timing
+fields with explicit tested-hardware acknowledgment, dependency adjustment,
+CRC repair and a reversible preview. Voltage and several controller behaviors
+cannot be transferred to native fields. See [Engineering workbench](ENGINEERING_WORKBENCH.md)
+for these workflows and the timing model's assumptions.

@@ -11,6 +11,11 @@
 | `ddr3_decoder.py`, `ddr3_xmp_decoder.py` | DDR3 base/module data and XMP |
 | `spd_xmp.py`, `spd_xmp_gui.py` | Exact XMP encoding and reviewed GUI authoring |
 | `spd_timing_planner.py` | Evidence-bound timing proposals and constraints |
+| `spd_native.py`, `spd_epp.py` | Generation-specific native and DDR2 EPP encoders |
+| `spd_compatibility.py`, `spd_merge.py` | Operation-scoped compatibility, bit/semantic conflict resolution and replay |
+| `spd_timing_analysis.py` | Explicit command-workload scheduling and missing constraints |
+| `spd_workbench_gui.py` | Shared preview, OEM, performance, timing and audit pages |
+| `spd_settings.py` | Atomic desktop collection preferences |
 | `spd_fields.py` | Named field masks, encodings, units and layout selection |
 | `spd_integrity.py` | Checksums, CRCs and bounded donor patches |
 | `spd_editor.py` | Editor document model and Tk interface |
@@ -81,3 +86,7 @@ manufacturer/revision and the relevant specification or datasheet section.
 Hardware reports should distinguish image decoding, EEPROM transport and boot
 or memory-training behavior. A successful file edit or checksum check alone
 does not verify the latter two.
+
+Update [the coverage matrix](docs/COVERAGE.md) separately for decoding, encoding,
+validation and physical qualification. New encoders require packed-byte vectors
+and unrelated-byte preservation checks; a valid checksum is not sufficient evidence.

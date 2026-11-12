@@ -35,6 +35,7 @@ def cycle_time(value):
 
 
 def access_time(value):
+    if value & 15 > 9:return None
     return round((value >> 4) / 10 + (value & 15) / 100, 3)
 
 
