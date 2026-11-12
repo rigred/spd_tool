@@ -108,6 +108,14 @@ See [Library management](docs/LIBRARY.md) and
 [HP donor profiles](docs/VENDOR_PROFILES.md) support matching generic modules
 while preserving their serials and original hardware configuration.
 
+## XMP and timing proposals
+
+The Byte editor's **XMP / timing planner** mode edits DDR3 XMP profiles or
+creates new ones, with per-byte review and undo. The timing planner generates
+faster-clock proposals for SDR through DDR3 from SPD anchors, user-reported
+tests and manually transcribed chip-datasheet constraints. Generated values
+remain untested proposals. See [XMP and timing planning](docs/XMP_TIMING_PLANNER.md).
+
 ## Documentation
 
 - [Command reference](docs/CLI.md): inspection, editing, donor patches,

@@ -9,6 +9,8 @@
 | `sdr_decoder.py`, `ddr_decoder.py` | Legacy generation entry points |
 | `ddr2_decoder.py` | DDR2 layout and timing encodings |
 | `ddr3_decoder.py`, `ddr3_xmp_decoder.py` | DDR3 base/module data and XMP |
+| `spd_xmp.py`, `spd_xmp_gui.py` | Exact XMP encoding and reviewed GUI authoring |
+| `spd_timing_planner.py` | Evidence-bound timing proposals and constraints |
 | `spd_fields.py` | Named field masks, encodings, units and layout selection |
 | `spd_integrity.py` | Checksums, CRCs and bounded donor patches |
 | `spd_editor.py` | Editor document model and Tk interface |

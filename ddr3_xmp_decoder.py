@@ -33,7 +33,7 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
       194/229: upper nibbles: [3:0]=tRAS upper, [7:4]=tRC upper
       195/230: tRAS LSB
       196/231: tRC LSB
-      197/232: tREFI LSB  (u16 LE in MTB units)
+      197/232: tREFI LSB  (u16 LE in thousands of MTB units)
       198/233: tREFI MSB
       199/234: tRFC  LSB  (u16 LE in MTB units)
       200/235: tRFC  MSB
@@ -77,6 +77,8 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
             return 0
         return dd / dv
 
+    ftb_ns = ((data[184] >> 4) / (data[184] & 15) / 1000) if len(data)>184 and data[184]>>4 and data[184]&15 else 0
+
     mtb_p1_ns = mtb_ns_from(180, 181)
     mtb_p2_ns = mtb_ns_from(182, 183)
 
@@ -100,13 +102,13 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
         return (data[lo] | (data[hi] << 8)) & 0xFFFF
 
     def t_in_ns(count_mtb: int, mtb_ns: float) -> float:
-        return round(count_mtb * mtb_ns, 3)
+        return round(count_mtb * mtb_ns, 6)
 
     def clocks_from_ns(ns_val: float, tck_ns: float) -> int:
-        return int(math.ceil(ns_val / tck_ns)) if tck_ns > 0 else 0
+        return int(math.ceil(ns_val / tck_ns - 1e-9)) if tck_ns > 0 else 0
 
     def parse_profile(base: int, mtb_ns: float, enabled: bool, dimms_per_ch: int, idx: int):
-        if not enabled or mtb_ns <= 0 or len(data) < base + 35:
+        if not enabled or (b179 >= 0x13 and not ftb_ns) or mtb_ns <= 0 or len(data) < base + 35:
             return None
         try:
             vb = data[base + 0]
@@ -152,12 +154,23 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
             tWR_ns  = t_in_ns(tWR_mtb, mtb_ns)
             tRAS_ns = t_in_ns(tRAS_mtb, mtb_ns)
             tRC_ns  = t_in_ns(tRC_mtb,  mtb_ns)
-            tREFI_ns= t_in_ns(tREFI,    mtb_ns)
+            tREFI_ns= t_in_ns(tREFI,    mtb_ns) * 1000
             tRFC_ns = t_in_ns(tRFC,     mtb_ns)
             tRTP_ns = t_in_ns(tRTP_mtb, mtb_ns)
             tRRD_ns = t_in_ns(tRRD_mtb, mtb_ns)
             tFAW_ns = t_in_ns(tFAW_mtb, mtb_ns)
             tWTR_ns = t_in_ns(tWTR_mtb, mtb_ns)
+
+            if b179 == 0x13:
+                def fine(offset):
+                    value=data[base+offset]
+                    return (value-256 if value&128 else value)*ftb_ns
+                tCK_ns=round(tCK_ns+fine(26),6)
+                tAA_ns=round(tAA_ns+fine(27),6)
+                tRP_ns=round(tRP_ns+fine(28),6)
+                tRCD_ns=round(tRCD_ns+fine(29),6)
+                tRC_ns=round(tRC_ns+fine(30),6)
+                if tCK_ns<=0:return None
 
             data_rate = int(round(2000.0 / tCK_ns)) if tCK_ns > 0 else 0
 
@@ -223,6 +236,7 @@ def decode_xmp(data: bytes) -> Optional[Dict]:
         "profile_1_dimms_per_channel": p1_dimms_per_ch,
         "profile_2_dimms_per_channel": p2_dimms_per_ch,
         "raw_header": data[176:185].hex(),
+        "fine_timebase_ns": round(ftb_ns,9) if b179==0x13 else None,
         "profile_1_mtb_ns": round(mtb_p1_ns, 6),
         "profile_2_mtb_ns": round(mtb_p2_ns, 6),
     }

@@ -229,7 +229,7 @@ class SPDEditor:
         edits = ttk.Frame(raw, padding=8)
         edits.pack(fill='x')
         for label, cb in [('Edit selected byte...', self.edit_selected), ('Write hex range...', self.edit_range),
-                          ('Part number...', self.edit_part), ('Serial number...', self.edit_serial)]:
+                          ('Part number...', self.edit_part), ('Serial number...', self.edit_serial), ('XMP / timing planner...', self.edit_xmp)]:
             ttk.Button(edits, text=label, command=lambda f=cb: self.run(f)).pack(side='left', padx=3)
         module_tab = ttk.Frame(book)
         self.module_tab=module_tab
@@ -591,6 +591,11 @@ class SPDEditor:
         if code is not None:
             doc.set_hpt(code)
             self.refresh()
+
+    def edit_xmp(self):
+        from spd_xmp_gui import XMPDialog
+        self.require_document()
+        return XMPDialog(self)
 
     def compute_hpt(self):
         import tkinter as tk

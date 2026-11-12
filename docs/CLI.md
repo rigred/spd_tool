@@ -68,6 +68,8 @@ See the [GUI hardware workflow](GUI_HARDWARE.md) for target selection and
 programming. The [USB serial bridge](EXTERNAL_BRIDGE.md) uses the same GUI
 workflow with optional pySerial and compatible microcontroller firmware.
 
+The Byte editor also opens the [XMP editor and timing planner](XMP_TIMING_PLANNER.md).
+
 ## Named edits
 
 ```sh
