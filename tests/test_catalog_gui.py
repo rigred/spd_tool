@@ -28,3 +28,35 @@ class CatalogTkTests(unittest.TestCase):
                     panel.submission()
                 self.assertTrue(output.is_file())
             finally:root.destroy()
+
+    def test_filters_mining_review_and_save(self):
+        import tkinter as tk
+        import time
+        from tkinter import ttk
+        from spd_editor import SPDEditor
+        from spd_catalog import Catalog
+        from tests.test_catalog import hp
+        from tests.test_spd import ddr2
+        with tempfile.TemporaryDirectory() as temp:
+            root=tk.Tk()
+            try:
+                app=SPDEditor(root);panel=app.catalog;panel.catalog=Catalog(temp)
+                for raw in [hp(1,101),hp(2,102),hp(3,103),ddr2()]:panel.catalog.add(raw)
+                panel.refresh();root.update()
+                panel.filters['memory'].set('DDR2');panel.refresh()
+                self.assertEqual(len(panel.table.get_children()),1)
+                panel.clear_filters();self.assertEqual(len(panel.table.get_children()),4)
+                panel.year_from.set('2020');panel.year_to.set('2000');panel.refresh()
+                self.assertIn('must not exceed',panel.count.get());panel.clear_filters()
+                panel.mine()
+                def wait():
+                    deadline=time.monotonic()+5
+                    while app.hardware.busy and time.monotonic()<deadline:root.update();time.sleep(.01)
+                    self.assertFalse(app.hardware.busy);root.update()
+                wait()
+                dialog=next(w for w in root.winfo_children() if isinstance(w,tk.Toplevel))
+                button=next(w for w in dialog.winfo_children() if isinstance(w,ttk.Button))
+                with patch('tkinter.simpledialog.askstring',return_value='Reviewed test family'),patch('tkinter.messagebox.askyesno',return_value=True):button.invoke()
+                wait()
+                self.assertEqual(len(panel.catalog.saved_families()),1)
+            finally:root.destroy()

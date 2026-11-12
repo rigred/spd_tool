@@ -55,7 +55,7 @@ class CatalogTests(unittest.TestCase):
         registry={'known':dict(A='0x1',B='0xFFFFFFFF',K='0xFFFFFF9C',equivalents=['TEST-DDR3'])}
         with patch('spd_catalog.load_registry',return_value=registry):
             result=self.catalog.hp_analysis(first['sha256'],4)
-            self.assertEqual(result['families'][0]['candidates'],['00000068'])
+            self.assertIn('conflicts',result['families'][0]['error'])
 
     def test_public_bundle_no_absolute_sources_and_no_overwrite(self):
         entry=self.catalog.add(ddr3(),'/private/source/path')

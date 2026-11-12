@@ -11,6 +11,13 @@ class CatalogPanel:
         from tkinter import ttk
         from tkinter.scrolledtext import ScrolledText
         self.editor, self.root, self.catalog = editor, editor.root, None
+        viewport=tk.Canvas(parent,highlightthickness=0,background='#EEF2F7')
+        outer=ttk.Scrollbar(parent,orient='vertical',command=viewport.yview)
+        outer.pack(side='right',fill='y');viewport.configure(yscrollcommand=outer.set);viewport.pack(fill='both',expand=True)
+        content=ttk.Frame(viewport);window=viewport.create_window(0,0,window=content,anchor='nw')
+        content.bind('<Configure>',lambda event:viewport.configure(scrollregion=viewport.bbox('all')))
+        viewport.bind('<Configure>',lambda event:viewport.itemconfigure(window,width=max(990,event.width),height=max(680,event.height)))
+        parent=content
         self.location = tk.StringVar(value='Choose a collection folder to open or create its database.')
         self.search = tk.StringVar()
         top=ttk.Frame(parent,padding=8); top.pack(fill='x')
@@ -21,16 +28,43 @@ class CatalogPanel:
         ttk.Label(search,text='Search manufacturer, model, serial or hash:').pack(side='left')
         ttk.Entry(search,textvariable=self.search,width=45).pack(side='left',padx=8)
         self.search.trace_add('write',lambda *args:self.refresh())
-        self.table=ttk.Treeview(parent,columns=('memory','manufacturer','part','serial','integrity'),show='headings',selectmode='extended')
+        self.filters={};self.filter_boxes={}
+        facets=ttk.LabelFrame(parent,text='Collection filters',padding=6);facets.pack(fill='x',padx=8)
+        fields=[('manufacturer','Vendor'),('dram_manufacturer','DRAM vendor'),('memory','Memory'),('module_type','Module type'),
+                ('capacity_mib','Capacity MiB'),('data_rate_MTps','Speed MT/s'),('ranks','Ranks'),('ecc','ECC'),
+                ('integrity','Integrity'),('hpt_present','HPT tag'),('length','Bytes'),('manufacture_year','Mfg year')]
+        for i,(key,title) in enumerate(fields):
+            var=tk.StringVar(value='All');self.filters[key]=var
+            frame=ttk.Frame(facets);frame.grid(row=i//4,column=i%4,sticky='ew',padx=3,pady=2)
+            ttk.Label(frame,text=title,width=11).pack(side='left')
+            box=ttk.Combobox(frame,textvariable=var,values=('All',),state='readonly',width=13);box.pack(side='left')
+            self.filter_boxes[key]=box;box.bind('<<ComboboxSelected>>',lambda event:self.refresh())
+        dates=ttk.Frame(parent,padding=6);dates.pack(fill='x')
+        self.year_from=tk.StringVar(value='Any');self.year_to=tk.StringVar(value='Any');self.sort=tk.StringVar(value='Model')
+        self.year_boxes=[]
+        for title,var in [('Manufactured from year',self.year_from),('to year',self.year_to)]:
+            ttk.Label(dates,text=title).pack(side='left',padx=3)
+            box=ttk.Combobox(dates,textvariable=var,values=('Any',),state='readonly',width=8);box.pack(side='left')
+            box.bind('<<ComboboxSelected>>',lambda event:self.refresh());self.year_boxes.append(box)
+        ttk.Label(dates,text='Sort').pack(side='left',padx=8)
+        sort=ttk.Combobox(dates,textvariable=self.sort,state='readonly',width=13,values=('Model','Vendor','Date oldest','Date newest','Capacity','Speed','Serial'))
+        sort.pack(side='left');sort.bind('<<ComboboxSelected>>',lambda event:self.refresh())
+        ttk.Button(dates,text='Clear filters',command=self.clear_filters).pack(side='left',padx=8)
+        mining=ttk.Frame(parent,padding=4);mining.pack(fill='x')
+        ttk.Button(mining,text='Mine HPT families…',command=lambda:editor.run(self.mine)).pack(side='left',padx=4)
+        ttk.Button(mining,text='Export saved families…',command=lambda:editor.run(self.export_families)).pack(side='left',padx=4)
+        self.count=tk.StringVar();ttk.Label(mining,textvariable=self.count,padding=4).pack(side='right')
+        table_frame=ttk.Frame(parent);table_frame.pack(fill='x',padx=8)
+        self.table=ttk.Treeview(table_frame,columns=('memory','manufacturer','part','serial','integrity'),show='headings',selectmode='extended',height=4)
         for key,title,width in [('memory','Type',70),('manufacturer','Manufacturer',250),('part','Model',260),('serial','Serial',130),('integrity','Integrity',100)]:
             self.table.heading(key,text=title); self.table.column(key,width=width)
-        scroll=ttk.Scrollbar(parent,orient='vertical',command=self.table.yview)
+        scroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.table.yview)
         self.table.configure(yscrollcommand=scroll.set)
-        scroll.pack(side='right',fill='y'); self.table.pack(fill='both',expand=True,padx=8)
+        scroll.pack(side='right',fill='y'); self.table.pack(fill='both',expand=True)
         buttons=ttk.Frame(parent,padding=8); buttons.pack(fill='x')
         for label,callback in [('Open selected in editor',self.open_selected),('Analyze HPT family',self.analyze),('Compute HPT for editor serial',lambda:self.analyze(True)),('Prepare public submission…',self.submission)]:
             ttk.Button(buttons,text=label,command=lambda cb=callback:editor.run(cb)).pack(side='left',padx=3)
-        self.details=ScrolledText(parent,height=12,wrap='word',font='TkFixedFont'); self.details.pack(fill='both',expand=True,padx=8,pady=8)
+        self.details=ScrolledText(parent,height=6,wrap='word',font='TkFixedFont'); self.details.pack(fill='both',expand=True,padx=8,pady=8)
         editor.set_text(self.details,'Imports preserve source files and deduplicate by SHA-256.\nPublic submission exports a reviewable bundle; no public service is configured and no data is uploaded.')
 
     def require(self):
@@ -44,11 +78,26 @@ class CatalogPanel:
         if path:
             self.catalog=Catalog(path); self.location.set(str(self.catalog.root)); self.refresh()
 
+    def clear_filters(self):
+        for var in self.filters.values():var.set('All')
+        self.year_from.set('Any');self.year_to.set('Any');self.search.set('');self.sort.set('Model');self.refresh()
+
     def refresh(self):
         self.table.delete(*self.table.get_children())
         if self.catalog:
-            for r in self.catalog.rows(self.search.get()):
+            facets=self.catalog.facets()
+            for key,box in self.filter_boxes.items():box.configure(values=['All',*facets[key]])
+            years=[str(v) for v in sorted({r['manufacture_year'] for r in self.catalog.rows() if r.get('manufacture_year') is not None})]
+            for box in self.year_boxes:box.configure(values=['Any',*years])
+            try:
+                rows=self.catalog.rows(self.search.get(),{k:v.get() for k,v in self.filters.items()},
+                                       None if self.year_from.get()=='Any' else self.year_from.get(),
+                                       None if self.year_to.get()=='Any' else self.year_to.get(),self.sort.get())
+            except ValueError as exc:
+                self.count.set(str(exc));return
+            for r in rows:
                 self.table.insert('','end',iid=r['sha256'],values=tuple(r[k] for k in ('memory','manufacturer','part','serial','integrity')))
+            self.count.set(f'{len(rows)} shown / {len(self.catalog.rows())} total images')
 
     def selected(self):
         self.require()
@@ -115,3 +164,54 @@ class CatalogPanel:
         if path:
             result=catalog.export_submission(hashes,path)
             self.editor.set_text(self.details,json.dumps(result,indent=2)+'\n\nPrepared for review. Public upload is not yet available.')
+
+    def mine(self):
+        catalog=self.require()
+        def done(report):
+            self.editor.set_text(self.details,json.dumps(report,indent=2))
+            self.show_mining(catalog,report)
+        self.editor.hardware.start_job('Mining collection HPT evidence…',catalog.mine_families,done)
+
+    def show_mining(self,catalog,report):
+        import tkinter as tk
+        from tkinter import ttk,messagebox,simpledialog
+        from tkinter.scrolledtext import ScrolledText
+        dialog=tk.Toplevel(self.root);dialog.title('Collection HPT family evaluation');dialog.geometry('1000x650')
+        dialog.transient(self.root)
+        ttk.Label(dialog,text='Select a group to inspect evidence. Saved families remain collection-local.',padding=8).pack(fill='x')
+        tree=ttk.Treeview(dialog,columns=('part','status','serials','evaluation','saved'),show='headings',selectmode='browse',height=8)
+        for key,title,width in [('part','Model',280),('status','Evaluation',160),('serials','Distinct serials',100),('evaluation','Evidence level',220),('saved','Saved',70)]:
+            tree.heading(key,text=title);tree.column(key,width=width)
+        tree.pack(fill='both',expand=True,padx=8)
+        text=ScrolledText(dialog,height=12,wrap='word');text.pack(fill='both',expand=True,padx=8,pady=8)
+        groups={str(i):r for i,r in enumerate(report['groups'])}
+        for key,r in groups.items():tree.insert('','end',iid=key,values=(r['part'],r['status'],r['distinct_serials'],r.get('evaluation',''),r['saved']))
+        def selected():
+            ids=tree.selection()
+            if not ids:raise ValueError('Select a family group')
+            return groups[ids[0]]
+        def show(event=None):
+            if tree.selection():self.editor.set_text(text,json.dumps(selected(),indent=2))
+        tree.bind('<<TreeviewSelect>>',show)
+        def save():
+            candidate=selected(); selected_id=tree.selection()[0]
+            if candidate['status']!='candidate':raise ValueError('This group does not have an eligible relation')
+            name=simpledialog.askstring('Family label','Family name or known HP spare part number (no identity is inferred):',initialvalue=candidate['part'],parent=dialog)
+            if not name:return
+            if not messagebox.askyesno('Save empirical HPT family',f"Save {candidate['evaluation']} relation from {candidate['distinct_serials']} serials?\n\nThis is not authentication or proof of an HP family identity. Evidence is rechecked before saving.",parent=dialog,default='no'):return
+            def saved(record):
+                if dialog.winfo_exists():
+                    candidate['saved']=True;tree.set(selected_id,'saved',True)
+                    self.editor.set_text(text,json.dumps(record,indent=2))
+            self.editor.hardware.start_job('Rechecking and saving HPT family…',lambda:catalog.save_family(candidate,name),saved)
+        ttk.Button(dialog,text='Save reviewed family to collection',command=lambda:self.editor.run(save)).pack(pady=8)
+        if groups:tree.selection_set('0');show()
+
+    def export_families(self):
+        from tkinter import filedialog
+        records=self.require().saved_families()
+        if not records:raise ValueError('No saved collection families')
+        registry={r['id']:dict(r['family'],equivalents=[r['part']],evaluation=r['evaluation'],evidence_sha256=r['evidence_sha256']) for r in records}
+        path=filedialog.asksaveasfilename(parent=self.root,title='New family registry export',defaultextension='.json')
+        if path:
+            with Path(path).open('x',encoding='utf-8') as handle:json.dump(registry,handle,indent=2)
