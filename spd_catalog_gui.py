@@ -53,6 +53,7 @@ class CatalogPanel:
         mining=ttk.Frame(parent,padding=4);mining.pack(fill='x')
         ttk.Button(mining,text='Mine HPT families…',command=lambda:editor.run(self.mine)).pack(side='left',padx=4)
         ttk.Button(mining,text='Export saved families…',command=lambda:editor.run(self.export_families)).pack(side='left',padx=4)
+        ttk.Button(mining,text='Vendor data / profiles…',command=lambda:editor.run(self.vendor_dialog)).pack(side='left',padx=4)
         self.count=tk.StringVar();ttk.Label(mining,textvariable=self.count,padding=4).pack(side='right')
         table_frame=ttk.Frame(parent);table_frame.pack(fill='x',padx=8)
         self.table=ttk.Treeview(table_frame,columns=('memory','manufacturer','part','oem_part_number','serial','integrity'),show='headings',selectmode='extended',height=4)
@@ -141,6 +142,9 @@ class CatalogPanel:
         if not self.editor.confirm_discard(): return
         self.editor.document=EditorDocument(data)
         self.editor.document.catalog_oem=(str(self.catalog.root),self.selected())
+        source=next(r for r in self.catalog.rows() if r['sha256']==self.selected())
+        if source.get('vendor_profile_application'):
+            self.editor.document.vendor_profile_application=source['vendor_profile_application']
         self.editor.hardware.plan=None
         self.editor.hardware.end.set(str(len(data)-1))
         self.editor.set_text(self.editor.diff,''); self.editor.refresh()
@@ -220,6 +224,12 @@ class CatalogPanel:
     def capture_editor(self):
         catalog=self.require();doc=self.editor.require_document()
         row=catalog.add(doc.spd.data,'editor snapshot')
+        report=getattr(doc,'vendor_profile_application',None)
+        if report:
+            if report['result_sha256']!=row['sha256']:
+                from spd_vendor import sha256
+                report=dict(report,result_sha256=sha256(doc.spd.data),modified_after_profile=True)
+            catalog.mark_profile_generated(row['sha256'],report)
         context=getattr(doc,'catalog_oem',None)
         if context and context[0]==str(catalog.root) and context[1]!=row['sha256'] and not catalog.oem_details(row['sha256']):
             fields=('oem_name','part_number','spare_number','assembly_number','model','hp_family_part_number','notes')
@@ -251,3 +261,8 @@ class CatalogPanel:
             record=catalog.set_oem_details(sha,details)
             self.refresh();self.editor.set_text(self.details,json.dumps(dict(sha256=sha,oem=record),indent=2));dialog.destroy()
         ttk.Button(dialog,text='Save OEM details (blank fields clear previous values)',command=lambda:self.editor.run(save)).pack(pady=10)
+
+    def vendor_dialog(self):
+        from spd_vendor_gui import VendorProfileDialog
+        self.editor.hardware.idle();self.require()
+        return VendorProfileDialog(self)

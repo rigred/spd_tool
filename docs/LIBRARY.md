@@ -167,3 +167,11 @@ export is the integration boundary for the future service. A service adapter
 must add endpoint configuration, explicit publication consent, transport and
 server validation, authentication where required, and durable receipt/error
 handling. Offline bundles must remain usable without an account or network.
+
+## Vendor observations and donor profiles
+
+**Vendor data / profiles** inspects decoded IDs and observed vendor regions,
+and manages serial-preserving HP HPT templates for matching manufacturer PNs.
+See [Vendor metadata and HP profiles](VENDOR_PROFILES.md) for compatibility
+checks, explicit HPT solution selection, opaque-byte options and generated-data
+provenance. Profile-generated entries are excluded from family mining.

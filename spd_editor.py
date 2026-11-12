@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Offline Tk SPD editor. Run `python spd_editor.py [image]`."""
+import hashlib
 import argparse
 import json
 import os
@@ -19,6 +20,18 @@ class EditorDocument:
         self.saved = self.spd.data
         self.undo_stack = []
         self.redo_stack = []
+        self._vendor_profile_provenance = {}
+
+    @property
+    def vendor_profile_application(self):
+        return self._vendor_profile_provenance.get(hashlib.sha256(self.spd.data).hexdigest())
+
+    @vendor_profile_application.setter
+    def vendor_profile_application(self, report):
+        sha=hashlib.sha256(self.spd.data).hexdigest()
+        if report.get('result_sha256')!=sha:
+            raise ValueError('Profile provenance does not match the editor image')
+        self._vendor_profile_provenance[sha]=report
 
     @property
     def dirty(self):
@@ -29,6 +42,10 @@ class EditorDocument:
         if candidate.mem_type != self.spd.mem_type or len(data) != len(self.spd.data):
             raise ValueError('Editing cannot change the memory generation or image length')
         if candidate.data != self.spd.data:
+            report=self.vendor_profile_application
+            sha=hashlib.sha256(candidate.data).hexdigest()
+            if report and sha!=report.get('target_sha256') and sha not in self._vendor_profile_provenance:
+                self._vendor_profile_provenance[sha]=dict(report,result_sha256=sha,modified_after_profile=True)
             self.undo_stack.append(self.spd.data)
             self.redo_stack.clear()
             self.spd = candidate

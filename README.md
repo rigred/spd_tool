@@ -104,7 +104,9 @@ The **SPD library** tab imports files or folders into a portable SQLite
 collection with readable manufacturer/model paths and hash deduplication.
 It includes HP family evidence analysis and offline public-submission bundles.
 See [Library management](docs/LIBRARY.md) and
-[Desktop release builds](docs/RELEASES.md).
+[Desktop release builds](docs/RELEASES.md). Vendor observations and reviewed
+[HP donor profiles](docs/VENDOR_PROFILES.md) support matching generic modules
+while preserving their serials and original hardware configuration.
 
 ## Documentation
 

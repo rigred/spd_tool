@@ -44,7 +44,8 @@ def describe(data):
     capacity = decoded.get('module_size_MiB')
     if capacity is None and decoded.get('module_size_GiB') is not None:
         capacity = decoded['module_size_GiB']*1024
-    return dict(metadata_version=2, memory=spd.mem_type_name,
+    from spd_vendor import vendor_metadata
+    return dict(metadata_version=3, vendor_data=vendor_metadata(data,decoded), memory=spd.mem_type_name,
                 manufacturer=mfg.get('module_mfg_id', 'Unknown manufacturer'),
                 dram_manufacturer=mfg.get('dram_mfg_id') or 'Unknown',
                 part=mfg.get('module_part_number', mfg.get('part_number', '')) or 'Unknown model',
@@ -76,6 +77,8 @@ class Catalog:
         self.root.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS images (sha TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, metadata TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS vendor_profiles (id TEXT PRIMARY KEY, record TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS generated_images (sha TEXT PRIMARY KEY, provenance TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS annotations (sha TEXT PRIMARY KEY, details TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS families (id TEXT PRIMARY KEY, record TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS sources (sha TEXT NOT NULL, source TEXT NOT NULL, UNIQUE(sha,source))')
@@ -83,7 +86,7 @@ class Catalog:
         with self.connect() as db:
             for row in db.execute('SELECT sha,metadata FROM images').fetchall():
                 old = json.loads(row['metadata'])
-                if old.get('metadata_version') != 2:
+                if old.get('metadata_version') != 3:
                     old.update(describe(self.data(row['sha'])))
                     db.execute('UPDATE images SET metadata=? WHERE sha=?',(json.dumps(old),row['sha']))
 
@@ -137,11 +140,12 @@ class Catalog:
         with self.connect() as db:
             rows = [json.loads(row['metadata']) for row in db.execute('SELECT metadata FROM images ORDER BY path')]
         with self.connect() as db:
+            generated={r['sha']:json.loads(r['provenance']) for r in db.execute('SELECT sha,provenance FROM generated_images')}
             annotations={r['sha']:json.loads(r['details']) for r in db.execute('SELECT sha,details FROM annotations')}
         result=[]
         for row in rows:
             details=annotations.get(row['sha256'],{})
-            row.update(oem=details, oem_name=details.get('oem_name',''), oem_part_number=details.get('part_number',''),
+            row.update(generated_vendor_profile=row['sha256'] in generated, vendor_profile_application=generated.get(row['sha256']), oem=details, oem_name=details.get('oem_name',''), oem_part_number=details.get('part_number',''),
                        oem_spare_number=details.get('spare_number',''), oem_assembly_number=details.get('assembly_number',''),
                        hp_family_part_number=hp_part(details))
             if search.casefold() not in ' '.join(str(v) for v in row.values()).casefold(): continue
@@ -213,7 +217,7 @@ class Catalog:
             if record_scope==scope:
                 family=dict(record['family'],equivalents=[row['part'],row.get('hp_family_part_number','')])
                 try:
-                    if any(member not in by_sha or family_scope(by_sha[member],self.data(member))!=scope for member in record['evidence_sha256']):
+                    if any(member not in by_sha or by_sha[member].get('generated_vendor_profile') or family_scope(by_sha[member],self.data(member))!=scope for member in record['evidence_sha256']):
                         family['_evidence_error']='Saved family OEM/model assignments changed; mine and review the collection again'
                 except (ValueError,OSError):family['_evidence_error']='Saved family evidence could not be verified'
                 registry[record['id']] = family
@@ -228,6 +232,7 @@ class Catalog:
                 families.append(dict(key=key,origin='registry',family=family))
         samples = {}
         for other in all_rows:
+            if other.get('generated_vendor_profile'):continue
             raw=self.data(other['sha256'])
             if len(raw)<184 or raw[2]!=11 or raw[176:180]!=b'HPT\0':continue
             if family_scope(other,raw)!=scope:continue
@@ -263,6 +268,7 @@ class Catalog:
     def mine_families(self):
         groups, errors = {}, []
         for row in self.rows():
+            if row.get('generated_vendor_profile'):continue
             if row['memory']!='DDR3' or row['part']=='Unknown model' and not row.get('hp_family_part_number'): continue
             try:
                 raw=self.data(row['sha256'])
@@ -336,6 +342,81 @@ class Catalog:
         with self.connect() as db:
             return [json.loads(r['record']) for r in db.execute('SELECT record FROM families ORDER BY id')]
 
+    def vendor_observations(self,sha):
+        from spd_vendor import vendor_metadata
+        return dict(vendor_metadata(self.data(sha)), oem_sticker_details=self.oem_details(sha))
+
+    def vendor_profiles(self):
+        with self.connect() as db:
+            return [json.loads(r['record']) for r in db.execute('SELECT record FROM vendor_profiles ORDER BY id')]
+
+    def create_hp_profile(self, donor_sha, family_key, name, copy_opaque=False):
+        from spd_vendor import sha256
+        donor=self.data(donor_sha)
+        row=next(r for r in self.rows() if r['sha256']==donor_sha)
+        if row.get('generated_vendor_profile'):raise ValueError('A generated image cannot serve as independent donor evidence')
+        if len(donor)<184 or donor[2]!=11 or donor[176:180]!=b'HPT\0' or integrity_info(donor)['status']!='VALID':
+            raise ValueError('Choose an integrity-valid DDR3 donor with an observed HPT signature')
+        analysis=self.hp_analysis(donor_sha)
+        entry=next((f for f in analysis['families'] if f['key']==family_key),None)
+        if not entry or entry.get('error') or donor[180:184].hex().upper() not in entry.get('candidates',[]):
+            raise ValueError('Selected family does not validate the donor HPT; analyze or mine its family first')
+        if copy_opaque and len(donor)!=256:raise ValueError('Opaque templates require a 256-byte donor')
+        name=str(name).strip()
+        if not name or len(name)>128:raise ValueError('Supply a profile name of 1–128 characters')
+        coefficients={k:entry['family'][k] for k in ('A','B','K')}
+        identity=json.dumps([donor_sha,family_key,coefficients,bool(copy_opaque)],sort_keys=True)
+        profile=dict(id=sha256(identity.encode()),kind='hp-hpt-v1',name=name,donor_sha256=donor_sha,
+                     manufacturer_part_number=row['part'],family_key=family_key,family_name=entry['family'].get('name',family_key),
+                     coefficients=coefficients,origin=entry['origin'],copy_opaque=bool(copy_opaque),
+                     created_at=datetime.now(timezone.utc).isoformat())
+        with self.connect() as db:db.execute('INSERT OR REPLACE INTO vendor_profiles VALUES (?,?)',(profile['id'],json.dumps(profile)))
+        return profile
+
+    def hp_profile_options(self, profile_id, target):
+        from spd_vendor import compatible_target,sha256
+        profile=next((p for p in self.vendor_profiles() if p['id']==profile_id),None)
+        if not profile:raise ValueError('Unknown vendor profile')
+        if profile.get('kind')!='hp-hpt-v1':raise ValueError('Unsupported vendor profile format')
+        if any(r['sha256']==profile['donor_sha256'] and r.get('generated_vendor_profile') for r in self.rows()):
+            raise ValueError('Generated images cannot serve as independent donors')
+        donor=self.data(profile['donor_sha256'])
+        compatible_target(donor,target)
+        # Revalidate the donor under its current family scope and evidence.
+        original=self.hp_analysis(profile['donor_sha256'])
+        entry=next((f for f in original['families'] if f['key']==profile['family_key']),None)
+        if (not entry or entry.get('error') or any(entry['family'][k]!=profile['coefficients'][k] for k in ('A','B','K'))
+                or donor[180:184].hex().upper() not in entry.get('candidates',[])):
+            raise ValueError('Donor family/evidence changed; recreate the profile after review')
+        target_serial=int.from_bytes(target[122:126],'big')
+        # Existing helper handles even B; never enumerate an unbounded relation.
+        b=int(profile['coefficients']['B'],16)
+        if not b or (b & -b)>1024:raise ValueError('Profile has an underdetermined HPT relation')
+        candidates=[f'{code:08X}' for code in compute_hpt_solutions(target_serial,profile['coefficients'])]
+        if not candidates:raise ValueError('This family has no HPT solution for the target serial')
+        return dict(profile=profile,donor_sha256=profile['donor_sha256'],target_sha256=sha256(target),
+                    target_serial=f'{target_serial:08X}',candidates=candidates,
+                    identity_warnings=['Target serial is zero or erased; this profile does not create a unique hardware identity'] if target_serial in (0,0xFFFFFFFF) else [],
+                    warning='Empirical HPT compatibility is not HP certification or a guarantee of server acceptance. Multiple solutions require an explicit choice.')
+
+    def preview_hp_profile(self,profile_id,target,hpt,replace_existing=False):
+        from spd_vendor import apply_hp_template,sha256
+        options=self.hp_profile_options(profile_id,bytes(target))
+        if hpt.upper() not in options['candidates']:raise ValueError('Choose an HPT value from this target serial’s solutions')
+        donor=self.data(options['donor_sha256'])
+        result=apply_hp_template(donor,bytes(target),hpt,options['profile']['copy_opaque'],replace_existing)
+        report=dict(options,chosen_hpt=hpt.upper(),result_sha256=sha256(result),
+                    changes=[dict(offset=i,before=a,after=b) for i,(a,b) in enumerate(zip(target,result)) if a!=b],
+                    generated=True)
+        return result,report
+
+    def mark_profile_generated(self, sha, report):
+        from spd_vendor import sha256
+        data=self.data(sha)
+        if not report.get('generated') or report.get('result_sha256')!=sha256(data):
+            raise ValueError('Generated-image provenance does not match this image')
+        with self.connect() as db:db.execute('INSERT OR REPLACE INTO generated_images VALUES (?,?)',(sha,json.dumps(report)))
+
     def export_submission(self, hashes, destination):
         hashes = sorted(set(hashes))
         if not hashes: raise ValueError('Select images to submit')
@@ -346,6 +427,9 @@ class Catalog:
             metadata=describe(data)
             details=self.oem_details(sha)
             if details: metadata['oem']=details
+            with self.connect() as db:
+                derived=db.execute('SELECT provenance FROM generated_images WHERE sha=?',(sha,)).fetchone()
+            if derived:metadata['vendor_profile_application']=json.loads(derived['provenance'])
             entries.append(dict(metadata,sha256=sha,file=f'images/{sha}.bin',part_number=metadata['part']))
         manifest = dict(schema='spd-tool-submission/2',status='prepared-offline',images=entries)
         with Path(destination).open('xb') as handle:
