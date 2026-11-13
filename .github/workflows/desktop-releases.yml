@@ -1,18 +1,24 @@
 name: Desktop builds and releases
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing version tag to build and publish (for example v2026.11.13.1)'
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: desktop-${{ github.workflow }}-${{ inputs.release_tag || github.event.release.tag_name }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -26,6 +32,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: refs/tags/${{ env.RELEASE_TAG }}
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
@@ -36,9 +43,15 @@ jobs:
         shell: python
         run: |
           import os
+          import sys
+          from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          if not (workspace / 'spd_version.py').is_file():
+              raise SystemExit('Tagged checkout is missing spd_version.py; commit the version file before creating a release tag')
+          sys.path.insert(0, str(workspace))
           from spd_version import VERSION
-          if os.environ.get('GITHUB_REF_TYPE') == 'tag':
-              assert os.environ['GITHUB_REF_NAME'] == 'v' + VERSION, 'Update spd_version.py before tagging a release'
+          if os.environ['RELEASE_TAG'] != 'v' + VERSION:
+              raise SystemExit('Release tag must match v plus VERSION in the tagged spd_version.py')
       - name: Install Linux desktop test dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
@@ -72,7 +85,7 @@ jobs:
           retention-days: 14
 
   publish:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-22.04
     permissions:
@@ -87,7 +100,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           cd release-assets
           cat *.sha256 > SHA256SUMS

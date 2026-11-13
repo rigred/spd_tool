@@ -3,6 +3,8 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 import tarfile
 import tempfile
@@ -20,6 +22,25 @@ def helper(name):
 
 
 class ReleasePackagingTests(unittest.TestCase):
+    def test_github_python_shell_can_import_checkout_from_temporary_script(self):
+        # GitHub's shell: python writes run: into a runner-temp script. Python
+        # searches that directory, not necessarily the checkout working directory.
+        text=(ROOT/'.github/workflows/desktop-releases.yml').read_text()
+        step=text.split('      - name: Check release tag\n',1)[1].split('      - name:',1)[0]
+        code=step.split('        run: |\n',1)[1]
+        code='\n'.join(line[10:] for line in code.splitlines())+'\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            directory=Path(tmp);script=directory/'runner-temp-check.py';script.write_text(code)
+            env=dict(os.environ,GITHUB_WORKSPACE=str(ROOT),RELEASE_TAG='v'+VERSION)
+            result=subprocess.run([sys.executable,'-I',str(script)],cwd=ROOT,env=env,text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            env['RELEASE_TAG']='v0.0.0'
+            result=subprocess.run([sys.executable,'-I',str(script)],cwd=ROOT,env=env,text=True,capture_output=True)
+            self.assertNotEqual(result.returncode,0);self.assertIn('must match',result.stderr)
+            env['GITHUB_WORKSPACE']=str(directory)
+            result=subprocess.run([sys.executable,'-I',str(script)],cwd=ROOT,env=env,text=True,capture_output=True)
+            self.assertNotEqual(result.returncode,0);self.assertIn('missing spd_version.py',result.stderr)
+
     def test_windows_build_stages_only_verified_assets(self):
         build=helper('build_desktop')
         from spd_pawnio import MODULES

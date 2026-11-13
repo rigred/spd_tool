@@ -87,8 +87,10 @@ never load a hardware driver or access DIMMs. Windows assets are downloaded
 from fixed official URLs and verified before bundling, with corresponding
 source/license files included.
 
-Pushes to `main`, pull requests and **Actions → Desktop builds and releases →
-Run workflow** produce downloadable workflow artifacts. To publish a release:
+Only publishing a GitHub release or **Actions → Desktop builds and releases →
+Run workflow** starts this workflow.
+
+To publish a release:
 
 1. Update `VERSION` in `spd_version.py` and commit the source/workflow changes.
 2. Push a matching tag, for example:
@@ -98,13 +100,27 @@ Run workflow** produce downloadable workflow artifacts. To publish a release:
    git push origin v2026.11.13.1
    ```
 
-The tag must equal `v` plus the source version. After both platforms pass, the
+3. Publish a GitHub release for that tag. Alternatively, run the workflow
+   manually and enter the existing tag in **release_tag**. Manual execution
+   builds that tag and creates/updates its release; it does not build the branch
+   selected in the workflow dispatch form. Keep the workflow on the default
+   branch so GitHub exposes the manual-run button.
+
+The tag must equal `v` plus the source version in that tagged checkout. After both platforms pass, the
 publish job creates/updates that GitHub release with Windows ZIP, Linux tar.gz
 and SHA-256 files. Native packages contain the application/runtime/docs, not the
 entire source checkout. GitHub supplies its usual tag source archives.
-Manual/branch/PR builds do not publish a release.
+Both entry points publish packages. Uploading assets to an existing release
+does not publish a second release. Publishing the release initially makes it
+visible before its native assets finish building.
 
-Build jobs have read-only repository permissions. Only the tag publish job has
+For a workflow-only fix affecting an existing release, commit the corrected
+workflow to the default branch and start a new manual run from that branch,
+entering the existing release tag. Re-running the old failed run retains its
+original workflow revision. Application/source changes require a new source tag;
+the manual tag checkout deliberately does not include newer branch code.
+
+Build jobs have read-only repository permissions. Only the publish job has
 `contents: write`, using the repository's built-in `GITHUB_TOKEN`; no personal
 token is required. Repository policy must permit Actions and release writes.
 Action versions are pinned to commits. Archives/checksums are unsigned; no
