@@ -12,6 +12,7 @@ class CatalogPanel:
         from tkinter.scrolledtext import ScrolledText
         self.editor,self.root,self.catalog=editor,editor.root,None
         self.display_rows={}
+        self.last_import_report=None
         self.location=tk.StringVar(value='Choose a collection folder to open or create its database.');self.search=tk.StringVar()
         top=ttk.Frame(parent,padding=8);top.pack(fill='x')
         for label,callback in [('Open / create collection…',self.choose),('Add SPD files / archives…',self.import_files),('Import folder…',self.import_folder),('Add editor image',self.add_editor),('Editor OEM details…',lambda:self.edit_oem(True))]:
@@ -34,7 +35,7 @@ class CatalogPanel:
         self.count=tk.StringVar();ttk.Label(search,textvariable=self.count).pack(side='right',padx=6)
         self.filters_container=ttk.Frame(parent);self.filters={};self.filter_boxes={}
         facets=ttk.LabelFrame(self.filters_container,text='Collection filters',padding=6);facets.pack(fill='x',padx=8)
-        fields=[('oem_name','OEM'),('manufacturer','Vendor'),('dram_manufacturer','DRAM vendor'),('memory','Memory'),('module_type','Module type'),('capacity_mib','Capacity MiB'),('data_rate_MTps','Speed MT/s'),('ranks','Ranks'),('ecc','ECC'),('integrity','Integrity'),('hpt_present','HPT tag'),('length','Bytes'),('manufacture_year','Mfg year')]
+        fields=[('oem_name','OEM'),('manufacturer','Vendor'),('dram_manufacturer','DRAM vendor'),('memory','Memory'),('module_type','Module type'),('capacity_mib','Capacity MiB'),('data_rate_MTps','Speed MT/s'),('ranks','Ranks'),('ecc','ECC'),('integrity','Integrity'),('hpt_present','HPT tag'),('length','Bytes'),('manufacture_year','Mfg year'),('support','Support')]
         for i,(key,title) in enumerate(fields):
             var=tk.StringVar(value='All');self.filters[key]=var
             frame=ttk.Frame(facets);frame.grid(row=i//4,column=i%4,sticky='ew',padx=3,pady=2)
@@ -45,7 +46,7 @@ class CatalogPanel:
             ttk.Label(dates,text=title).pack(side='left',padx=3);box=ttk.Combobox(dates,textvariable=var,values=('Any',),state='readonly',width=8);box.pack(side='left');box.bind('<<ComboboxSelected>>',lambda event:self.refresh());self.year_boxes.append(box)
         ttk.Button(dates,text='Clear filters',command=self.clear_filters).pack(side='left',padx=8)
         actions=ttk.Frame(parent,padding=6);actions.pack(fill='x')
-        for title,items in [('Module actions',[('Open selected in editor',self.open_selected),('OEM sticker details…',self.edit_oem),('Analyze HPT family',self.analyze),('Compute HPT for editor serial',lambda:self.analyze(True))]),('HP tools',[('Mine HPT families…',self.mine),('Vendor data / profiles…',self.vendor_dialog)]),('Export',[('Open SPD bundle…',self.export_bundle),('Public submission…',self.submission),('Saved HPT families…',self.export_families)])]:
+        for title,items in [('Module actions',[('Open / inspect selected',self.open_selected),('OEM sticker details…',self.edit_oem),('Analyze HPT family',self.analyze),('Compute HPT for editor serial',lambda:self.analyze(True))]),('HP tools',[('Mine HPT families…',self.mine),('Vendor data / profiles…',self.vendor_dialog)]),('Export',[('Selected raw binary…',self.export_binary),('Open SPD bundle…',self.export_bundle),('Last import report…',self.export_import_report),('Public submission…',self.submission),('Saved HPT families…',self.export_families)])]:
             button=ttk.Menubutton(actions,text=title);menu=tk.Menu(button,tearoff=False)
             for label,callback in items:menu.add_command(label=label,command=lambda cb=callback:editor.run(cb))
             button.configure(menu=menu);button.pack(side='left',padx=3)
@@ -56,8 +57,8 @@ class CatalogPanel:
         ttk.Label(parent,textvariable=self.summary,padding=(10,4),wraplength=1150).pack(fill='x')
         self.panes=ttk.Panedwindow(parent,orient='vertical');self.panes.pack(fill='both',expand=True,padx=8,pady=(0,8))
         table_frame=ttk.Frame(self.panes);self.panes.add(table_frame,weight=8)
-        self.table=ttk.Treeview(table_frame,columns=('memory','manufacturer','part','oem_part_number','serial','integrity'),show='headings',selectmode='extended',height=18)
-        for key,title,width in [('memory','Type',70),('manufacturer','Manufacturer',230),('part','Model / part number',260),('oem_part_number','OEM part / HP family',200),('serial','Serial',125),('integrity','Integrity',95)]:self.table.heading(key,text=title);self.table.column(key,width=width,minwidth=60)
+        self.table=ttk.Treeview(table_frame,columns=('memory','manufacturer','part','oem_part_number','serial','integrity','support'),show='headings',selectmode='extended',height=18)
+        for key,title,width in [('memory','Type',70),('manufacturer','Manufacturer',230),('part','Model / part number',260),('oem_part_number','OEM part / HP family',200),('serial','Serial',125),('integrity','Integrity',95),('support','Support',140)]:self.table.heading(key,text=title);self.table.column(key,width=width,minwidth=60)
         scroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.table.yview);scroll.pack(side='right',fill='y')
         horizontal=ttk.Scrollbar(table_frame,orient='horizontal',command=self.table.xview);horizontal.pack(side='bottom',fill='x')
         self.table.configure(yscrollcommand=scroll.set,xscrollcommand=horizontal.set);self.table.pack(fill='both',expand=True)
@@ -79,7 +80,7 @@ class CatalogPanel:
         selection=self.table.selection()
         if len(selection)!=1:self.summary.set(f'{len(selection)} images selected');return
         row=self.display_rows.get(selection[0])
-        if row:self.summary.set(f"{row['memory']} | {row['manufacturer']} | {row['part']} | {row.get('capacity_mib','?')} MiB | {row.get('ranks','?')} ranks | {row['integrity']} | SHA-256 {row['sha256'][:16]}…")
+        if row:self.summary.set(f"{row['memory']} | {row['manufacturer']} | {row['part']} | {row.get('capacity_mib') or '?'} MiB | {row.get('ranks') or '?'} ranks | {row['integrity']} | {row.get('support','Editable')} | SHA-256 {row['sha256'][:16]}…")
 
     def remove_selected(self):
         import tkinter as tk
@@ -198,7 +199,7 @@ class CatalogPanel:
                 self.count.set(str(exc));return
             self.display_rows={r['sha256']:r for r in rows}
             for r in rows:
-                self.table.insert('','end',iid=r['sha256'],values=(r['memory'],r['manufacturer'],r['part'],r.get('hp_family_part_number') or r.get('oem_part_number',''),r['serial'],r['integrity']))
+                self.table.insert('','end',iid=r['sha256'],values=(r['memory'],r['manufacturer'],r['part'],r.get('hp_family_part_number') or r.get('oem_part_number',''),r['serial'],r['integrity'],r.get('support','Editable')))
             self.count.set(f'{len(rows)} shown / {len(self.catalog.rows())} total images')
             if hasattr(self.editor,'factory'):self.editor.factory.refresh()
 
@@ -211,11 +212,14 @@ class CatalogPanel:
     def import_paths(self, paths):
         catalog=self.require()
         def done(result):
+            from spd_import_report import import_report,report_preview
             rows,errors=result
             self.editor.factory.discovery_key=None;self.refresh()
-            self.location.set(f'{catalog.root} — imported {len(rows)} entries; {len(errors)} rejected inputs/members')
-            if errors:self.show_details.set(True);self.toggle_details()
-            self.editor.set_text(self.details,json.dumps(dict(collection=str(catalog.root),accepted=len(rows),errors=errors),indent=2))
+            self.last_import_report=dict(import_report(rows,errors),collection=str(catalog.root))
+            report=self.last_import_report
+            self.location.set(f"{catalog.root} — imported {len(rows)} sources; {report['archived']} read-only; {len(errors)} rejected")
+            if errors or report['archived'] or report['invalid_integrity']:self.show_details.set(True);self.toggle_details()
+            self.editor.set_text(self.details,report_preview(report))
         self.editor.hardware.start_job('Importing SPD files into collection…',lambda:catalog.import_files(paths),done)
 
     def import_files(self):
@@ -228,14 +232,7 @@ class CatalogPanel:
         from tkinter import filedialog
         self.require()
         path=filedialog.askdirectory(parent=self.root,title='Import SPD directory (sources are retained)')
-        if path:
-            paths=[]
-            for p in Path(path).rglob('*'):
-                if self.catalog and any(parent in (self.catalog.root/'modules',self.catalog.root/'originals') for parent in p.resolve().parents):continue
-                if p.is_file() and not p.is_symlink() and p.suffix.lower() in ('.bin','.spd','.thp','.rw','.hex','.txt','.spdz','.zip','.7z'):
-                    paths.append(p)
-                    if len(paths)>10000: raise ValueError('Folder exceeds 10,000 candidate files; import smaller folders')
-            self.import_paths(paths)
+        if path:self.import_paths([path])
 
     def add_editor(self):
         catalog=self.require(); doc=self.editor.require_document()
@@ -243,11 +240,12 @@ class CatalogPanel:
 
     def open_selected(self):
         from spd_editor import EditorDocument
-        data=self.require().data(self.selected())
+        catalog=self.require();sha=self.selected();data=catalog.data(sha)
+        source=next(r for r in catalog.rows() if r['sha256']==sha)
+        if not source.get('editable',True):return self.inspect_archive(source,data)
         if not self.editor.confirm_discard(): return
         self.editor.document=EditorDocument(data)
         self.editor.document.catalog_oem=(str(self.catalog.root),self.selected())
-        source=next(r for r in self.catalog.rows() if r['sha256']==self.selected())
         if source.get('vendor_profile_application'):
             self.editor.document.vendor_profile_application=source['vendor_profile_application']
             self.editor.document.engineering_history=json.loads(json.dumps(source['vendor_profile_application'].get('engineering_history',[])))
@@ -255,6 +253,40 @@ class CatalogPanel:
         self.editor.hardware.end.set(str(len(data)-1))
         self.editor.set_text(self.editor.diff,''); self.editor.refresh()
         self.editor.book.select(self.editor.overview_tab)
+
+    def inspect_archive(self,row,data):
+        import tkinter as tk
+        from tkinter import ttk
+        from tkinter.scrolledtext import ScrolledText
+        dialog=tk.Toplevel(self.root);dialog.title(row['memory']+' — read-only SPD archive');dialog.geometry('900x650');dialog.transient(self.root)
+        ttk.Label(dialog,text=row['memory']+'  •  '+row['part'],font='TkHeadingFont',padding=12).pack(anchor='w')
+        ttk.Label(dialog,text='Read-only collection image. Binary and open-bundle export preserve every byte.\nTiming editing and EEPROM programming for this image are unavailable.',padding=(12,0)).pack(anchor='w')
+        book=ttk.Notebook(dialog);book.pack(fill='both',expand=True,padx=12,pady=12)
+        overview=ttk.Frame(book,padding=10);book.add(overview,text='Identity / integrity')
+        for i,(title,value) in enumerate([('Manufacturer',row['manufacturer']),('Part number',row['part']),('Serial',row['serial']),('Manufactured',row['manufacture_date'] or 'Unknown'),('Module type',row['module_type']),('Image length',str(len(data))+' bytes'),('SPD integrity',row['integrity']),('CRC coverage',row.get('integrity_details',{}).get('scope','See metadata')),('SHA-256',row['sha256'])]):
+            ttk.Label(overview,text=title+':').grid(row=i,column=0,sticky='nw',padx=(0,15),pady=3)
+            ttk.Label(overview,text=value,wraplength=640).grid(row=i,column=1,sticky='w',pady=3)
+        ttk.Label(overview,text='\n'.join(row.get('warnings',[])),wraplength=740).grid(row=9,column=0,columnspan=2,sticky='nw',pady=12)
+        for title,text in [('Exact bytes','\n'.join(f'{i:04X}: '+' '.join(f'{v:02X}' for v in data[i:i+16]) for i in range(0,len(data),16))),('Metadata',json.dumps(row,indent=2))]:
+            view=ScrolledText(book,wrap='none',font='TkFixedFont');view.insert('1.0',text);view.configure(state='disabled');book.add(view,text=title)
+        ttk.Button(dialog,text='Close',command=dialog.destroy).pack(anchor='e',padx=12,pady=(0,12))
+        return dialog
+
+    def export_binary(self):
+        from tkinter import filedialog
+        from spd_containers import exclusive_output
+        data=self.require().data(self.selected())
+        path=filedialog.asksaveasfilename(parent=self.root,title='Export exact SPD bytes (no repair)',defaultextension='.bin',filetypes=[('Raw SPD binary','*.bin')])
+        if path:
+            if Path(path).suffix.lower() in ('.thp','.rw','.zip','.spdz','.7z'):raise ValueError('Choose a binary filename, not a container extension')
+            exclusive_output(path,data)
+
+    def export_import_report(self):
+        from tkinter import filedialog
+        from spd_containers import exclusive_output
+        if self.last_import_report is None:raise ValueError('Import files first to generate a report')
+        path=filedialog.asksaveasfilename(parent=self.root,title='Save complete import report',defaultextension='.json',filetypes=[('JSON report','*.json')])
+        if path:exclusive_output(path,(json.dumps(self.last_import_report,indent=2)+'\n').encode('utf-8'))
 
     def analyze(self, for_editor=False):
         catalog=self.require(); sha=self.selected()

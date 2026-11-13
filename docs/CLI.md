@@ -203,10 +203,15 @@ python spd_tool.py convert --source module.thp --out module.bin
 python spd_tool.py convert --source first.thp --source second.thp --out modules.spdz
 python spd_tool.py convert --source collection.zip --out-dir converted
 python spd_tool.py library-import --collection ./library --source SPDs.7z
+python spd_tool.py library-import --collection ./library --source ./Unsorted-SPD-Dumps/Dumps
 ```
 
 Conversion preserves exact payloads, including invalid SPD integrity. Use
 `--format bin` or `--format spdz` to select an output explicitly. Bulk reports
-include per-input errors; exit status 2 indicates partial failure. Existing
+include per-input errors; exit status 2 indicates partial failure.
+`library-import --source` accepts directories and reports editable/read-only,
+distinct-image and invalid/unknown integrity counts. A stored damaged or
+unsupported-generation image is an archive entry, not a conversion failure.
+The full JSON report lists each source and rejected input. Existing
 output files are not overwritten. Read [THP import](THP_IMPORT.md) and the
 [open bundle specification](OPEN_SPD_BUNDLE.md) for format and validation scope.

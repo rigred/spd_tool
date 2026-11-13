@@ -100,7 +100,7 @@ def write_bundle(records,destination):
                 if len(original)>MAX_FILE:raise ValueError('Original source exceeds 1 MiB')
                 digest_source=sha256(original)
                 if source.get('sha256')!=digest_source or source.get('length')!=len(original):raise ValueError('Original source hash/length mismatch')
-                extension={'thaiphoon-th20':'.thp','rw-everything':'.rw','hex-text':'.txt'}.get(source.get('format'),'.dat')
+                extension='.thp' if source.get('format','').startswith('thaiphoon-th') else {'rw-everything':'.rw','hex-text':'.txt'}.get(source.get('format'),'.dat')
                 source['file']='sources/'+digest_source+extension;payloads[source['file']]=original
             if source not in entry['sources']:entry['sources'].append(source)
     if not images:raise ValueError('Select at least one image')

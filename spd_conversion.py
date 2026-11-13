@@ -7,10 +7,11 @@ from spd_bundle import write_bundle
 
 
 def image_metadata(data):
-    from spd_library import SPD
+    from spd_catalog import describe
+    from spd_archive import archive_integrity
     try:
-        decoded=SPD(data).decoded_data;m=decoded['manufacturing']
-        return dict(manufacturer=m.get('module_mfg_id'),part_number=m.get('module_part_number'),serial=m.get('serial_number'),spd_integrity=decoded['crc_info'])
+        row=describe(data)
+        return dict(manufacturer=row['manufacturer'],part_number=row['part'],serial=row['serial'],spd_integrity=archive_integrity(data),editable=row['editable'],support=row['support'],warnings=row['warnings'])
     except (ValueError,NotImplementedError) as exc:return dict(decoder_error=str(exc))
 
 
@@ -55,7 +56,7 @@ def convert_files(paths,out=None,out_dir=None,format=None):
 
 
 def add_parsers(subparsers):
-    p=subparsers.add_parser('convert',help='Losslessly convert TH20, raw/text dumps or open bundles to binary or open ZIP bundles.')
+    p=subparsers.add_parser('convert',help='Losslessly convert supported THP, raw/text dumps or open bundles to binary or open ZIP bundles.')
     p.add_argument('--source',action='append',required=True,help='Input file/archive; repeat for bulk conversion.')
     group=p.add_mutually_exclusive_group(required=True);group.add_argument('--out');group.add_argument('--out-dir')
     p.add_argument('--format',choices=('bin','spdz'),help='Default: infer spdz from an --out .spdz/.zip extension, otherwise bin.')
@@ -64,9 +65,10 @@ def add_parsers(subparsers):
         if result['errors']:raise SystemExit(2)
     p.set_defaults(func=convert)
     p=subparsers.add_parser('library-import',help='Bulk import/convert source files into a managed SQLite SPD collection.')
-    p.add_argument('--collection',required=True);p.add_argument('--source',action='append',required=True)
+    p.add_argument('--collection',required=True);p.add_argument('--source',action='append',required=True,help='File, archive or directory; repeat for multiple sources.')
     def library_import(args):
         from spd_catalog import Catalog
-        rows,errors=Catalog(args.collection).import_files(args.source);print(json.dumps(dict(accepted=rows,errors=errors),indent=2))
+        from spd_import_report import import_report
+        rows,errors=Catalog(args.collection).import_files(args.source);print(json.dumps(import_report(rows,errors),indent=2))
         if errors:raise SystemExit(2)
     p.set_defaults(func=library_import)

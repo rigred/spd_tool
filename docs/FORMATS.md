@@ -12,7 +12,10 @@ exact length and dispatches by byte 2:
 | `0x08` | DDR2 SDRAM |
 | `0x0B` | DDR3 SDRAM |
 
-Unsupported types and oversized images are rejected. Use the catalog scanner
+Unsupported types and oversized images are rejected by the editor. The library
+can retain 512-byte DDR4, 1024-byte DDR5 and unknown-type images as read-only
+archive entries with identity/integrity inspection. It does not enable newer
+generation timing editing or programming. Use the firmware scanner
 to extract images from larger files. Partial DDR3 images retain their base
 block; absent optional manufacturing/customer data is reported as unavailable.
 

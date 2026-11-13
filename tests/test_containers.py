@@ -113,10 +113,11 @@ class OpenBundleTests(unittest.TestCase):
     def test_future_generation_raw_images_can_be_archived_without_decoder_claims(self):
         data=bytearray(512);data[2]=12;loaded=decode_bundle_members(bundle_members(dict(data=data,metadata={})))
         self.assertEqual(loaded[0]['data'],bytes(data))
-    def test_bundle_image_without_supported_decoder_is_not_misimported(self):
+    def test_unknown_memory_type_is_archived_without_inventing_a_generation(self):
         with tempfile.TemporaryDirectory() as tmp:
             raw=bytearray(256);raw[2]=0;path=Path(tmp)/'unsupported.spdz';write_bundle([dict(data=raw,metadata={})],path)
-            rows,errors=Catalog(Path(tmp)/'collection').import_files([path]);self.assertFalse(rows);self.assertEqual(len(errors),1)
+            rows,errors=Catalog(Path(tmp)/'collection').import_files([path]);self.assertFalse(errors);self.assertEqual(len(rows),1)
+            self.assertFalse(rows[0]['editable']);self.assertEqual(rows[0]['memory'],'Unknown(0x00)');self.assertEqual(rows[0]['integrity'],'UNKNOWN')
 
 
 class CollectionContainerTests(unittest.TestCase):
@@ -154,10 +155,11 @@ class CollectionContainerTests(unittest.TestCase):
             with zipfile.ZipFile(path,'w') as z:z.writestr('good.bin',ddr3())
             with self.assertRaisesRegex(ValueError,'manifest'):read_inputs(path)
     @unittest.skipUnless(py7zr,'Optional py7zr not installed')
-    def test_supplied_7z_import_reports_bad_memory_type_and_decodes_rw(self):
+    def test_supplied_7z_import_archives_bad_memory_type_and_decodes_rw(self):
         with tempfile.TemporaryDirectory() as tmp:
             catalog=Catalog(Path(tmp)/'collection');rows,errors=catalog.import_files([FIXTURES/'mixed-spds.7z'])
-            self.assertEqual(len(rows),12);self.assertEqual(len(errors),1);self.assertIn('0x00',errors[0]['error']);self.assertEqual(len(catalog.rows()),10)
+            self.assertEqual(len(rows),13);self.assertFalse(errors);self.assertEqual(len(catalog.rows()),11)
+            archived=[r for r in rows if not r['editable']];self.assertEqual(len(archived),1);self.assertEqual(archived[0]['memory'],'Unknown(0x00)')
             self.assertTrue(any(row['import_format']=='rw-everything' for row in rows))
 
 @unittest.skipUnless(os.environ.get('DISPLAY'),'No graphical display')

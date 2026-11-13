@@ -84,7 +84,10 @@ validation; JSON Schema alone cannot verify file bytes.
 - `length` is the exact uncompressed byte length. A raw image contains 3–65536
   bytes, allowing partial/future-generation archival without promising that a
   particular editor supports it. Normal supported editor images remain 128–256
-  bytes. `memory_type` is integer 0–255 and equals raw byte 2.
+  bytes. The collection currently stores 128–256, 512 and 1024-byte images;
+  DDR4/DDR5 and unknown memory types are read-only archive entries. Other bundle
+  lengths can be preserved by a bundle reader but are rejected by collection
+  import. `memory_type` is integer 0–255 and equals raw byte 2.
 - Optional `metadata` is a JSON object. Manufacturer identity is a decoded
   declaration; OEM sticker details and test records are observations, not proof
   of provenance or authentication. Unknown metadata may be retained without
@@ -183,4 +186,4 @@ The existing public-submission ZIP/manifest is a separate workflow/schema and
 is not automatically interpreted as this format. A future public service can
 adopt this documented interchange format without requiring proprietary files.
 
-Read [THP import](THP_IMPORT.md) for the observed TH20 layout and its limits.
+Read [THP import](THP_IMPORT.md) for the observed THP layouts and their limits.

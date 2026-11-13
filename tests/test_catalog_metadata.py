@@ -18,7 +18,7 @@ class CatalogMetadataTests(unittest.TestCase):
             db.execute('UPDATE images SET metadata=?',(json.dumps(old),))
         reopened=Catalog(self.catalog.root)
         row=reopened.rows()[0]
-        self.assertEqual(row['metadata_version'],3)
+        self.assertEqual(row['metadata_version'],4)
         self.assertEqual(row['manufacture_year'],2015)
         self.assertEqual(row['path'],entry['path'])
         manifest=reopened.export_submission([entry['sha256']],self.root/'meta.zip')

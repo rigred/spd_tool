@@ -1,10 +1,15 @@
 # Thaiphoon THP import and lossless conversion
 
-TH20 files can be opened directly in the editor, imported individually or in
+Supported THP files can be imported individually or in
 bulk through **SPD library → Add SPD files / Import folder**, or converted from
 the CLI. Imports decode the container into a normal `.bin` image under the
 collection's existing manufacturer/model hierarchy. They do not modify the
 source file or repair its SPD checksum/CRC.
+
+SDR through DDR3 images can open in the editor. DDR4, DDR5 and unsupported or
+damaged memory-type declarations open in the library's read-only inspector.
+Those archive entries support exact binary and open-bundle export; they do not
+enable timing editing or EEPROM programming for newer generations.
 
 ## Commands
 
@@ -19,6 +24,10 @@ python spd_tool.py convert --source first.thp --source second.thp --out-dir conv
 python spd_tool.py library-import --collection ./collection \
   --source first.thp --source second.thp
 
+# Recursively import a public dump collection, including extensionless THP files.
+python spd_tool.py library-import --collection ./collection \
+  --source ./Unsorted-SPD-Dumps/Dumps
+
 # Import an ordinary ZIP, open SPD bundle or optional 7z collection.
 python spd_tool.py library-import --collection ./collection --source SPDs.7z
 
@@ -32,11 +41,92 @@ Without the optional dependency, unpack 7z with a normal archive utility and
 import the extracted folder. Archives are read into bounded memory buffers;
 member paths are not extracted directly into the collection filesystem.
 
-Bulk import reports each rejected member while retaining successfully decoded
+Bulk import separates conversion failures from invalid or unknown SPD integrity.
+The GUI displays grouped results and a bounded preview; **Export → Last import
+report** saves the complete JSON report. Import reports each rejected member while retaining successfully decoded
 images. Identical raw images are deduplicated by SHA-256, including images
 arriving through different wrappers or filenames. Ordinary `.zip` archives
 may contain `.thp`, `.bin`, `.spd`, hex-text and the supported RW text dumps.
 Nested archives, encrypted archives and unknown THP revisions are rejected.
+
+## Supported container revisions
+
+Each observed layout consists of a five-byte header (`04` followed by four
+ASCII identifier bytes), the transformed payload and a one-byte opaque trailer.
+The trailer is `13` in this public collection; its checksum meaning has not been
+established. Exact lengths are required. Payload length comes from the header,
+not from a filename or guessed RAM generation.
+
+| Identifier | File bytes | Payload bytes | Transform |
+| --- | ---: | ---: | --- |
+| TH20 | 262 | 256 | XOR with `i & 255` |
+| TH40 | 518 | 512 | XOR with `i & 255` |
+| TH41 | 518 | 512 | Repeating ASCII mask 41; byte zero unchanged |
+| TH42 | 518 | 512 | Repeating ASCII mask 42; byte zero unchanged |
+| TH43 | 518 | 512 | 16-bit ciphertext-feedback transform |
+| TH50 | 1030 | 1024 | Same mask as TH41; byte zero unchanged |
+| TH53 | 1030 | 1024 | Same feedback transform as TH43 |
+
+These are reversible obfuscation schemes, not cryptographic protection or
+authentication. THP version names do not establish whether an SPD payload is
+valid. Other revisions, including similarly named identifiers, are not assumed
+to use one of these transforms.
+
+For TH41/TH50 and TH42, the mask is the following **ASCII text**, not its hex
+decoding:
+
+```python
+MASK41 = b'0A30CD6F8C7890C5DAB95F68F18A6AF7420CD3D630A4C439AB98FAD1C83C6F7A568AB26CD39D1AF1D2'
+MASK42 = b'5531A7648C7390C1D8A91F34F5656A77440F93F610A57F38A442FBD8C03C328B7D8E715C317A3A'
+# MASK41 has 82 bytes; MASK42 has 78.
+spd[0] = payload[0]
+for i in range(1, len(payload)):
+    spd[i] = payload[i] ^ mask[i % len(mask)]
+```
+
+For TH43/TH53, feedback uses the original encrypted byte. Updating the state
+with the decoded byte produces incorrect output:
+
+```python
+state = 471
+spd = bytearray()
+for encrypted in payload:
+    spd.append(encrypted ^ (state >> 8))
+    state = (state + encrypted + 12719) & 0xFFFF
+```
+
+The importer never changes the payload based on a failed SPD checksum. In
+particular, TH50 examples in the tested collection have invalid DDR5 CRCs;
+conversion retains those results instead of manufacturing a valid checksum.
+
+## Public collection validation
+
+Regression testing uses
+[passnet-spd/Unsorted-SPD-Dumps](https://github.com/passnet-spd/Unsorted-SPD-Dumps)
+at commit `a5391203743ec9a263fe922d8a9fd55ad7891c68`. All 3,741 dump files decode
+and import: 597 TH20, 525 TH40, 1,826 TH41, 11 TH42, 659 TH43, 8 TH50 and
+115 TH53. This includes 38 files without the usual `.thp` extension. Decoded
+images deduplicate to 3,585 entries.
+
+Of those 3,741 source images, 543 use supported editor generations and 3,198
+are read-only entries. Integrity inspection flags 412 mismatches and 55 unknown
+results. Unknown memory types are retained under their actual type byte, even
+if a filename suggests DDR3. Import success means that the container was
+decoded and its exact bytes stored; it does not qualify the SPD for hardware.
+
+DDR4 checks cover bytes 0–125 and 128–253, against the CRCs at 126–127 and
+254–255. DDR5 checks cover bytes 0–509 against the CRC at 510–511. These checks
+do not validate vendor or XMP regions outside that coverage. Manufacturer,
+part number, date and serial use each generation's manufacturing block;
+unavailable capacity/speed/rank fields remain unknown.
+
+The repository is not redistributed with SPD Tool. To run its optional regression
+test, obtain the pinned commit and set `SPD_TEST_CORPUS` to its `Dumps` directory:
+
+```sh
+SPD_TEST_CORPUS=/path/to/Unsorted-SPD-Dumps/Dumps \
+  python -m unittest tests.test_modern_thp -v
+```
 
 ## Observed TH20 structure
 
@@ -99,8 +189,8 @@ Avexir conversion preserves the bad CRC and zero divisor; neither is guessed
 or corrected during import. Repair is a separate explicit editing operation.
 
 The supplied `SPDs.7z` also contains raw `.spd` files and an RW text dump. Its
-`2133 c9 psc.spd` entry has memory-type byte `00`; the collection reports it as
-unsupported instead of labelling it DDR3 based on its filename. Duplicate
+`2133 c9 psc.spd` entry has memory-type byte `00`; the collection keeps it as
+a read-only unknown-type image instead of labelling it DDR3 based on its filename. Duplicate
 images under different names remain a single collection image. Generic binary
 conversion can still preserve an unsupported raw image for inspection.
 

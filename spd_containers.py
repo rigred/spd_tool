@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Lossless TH20/RW import and bounded ZIP/7z ingestion. No integrity repair."""
+"""Lossless THP/RW import and bounded ZIP/7z ingestion. No integrity repair."""
 import hashlib,io,json,re,stat,zipfile,os,tempfile,zlib
 from pathlib import Path,PurePosixPath
 
@@ -35,10 +35,8 @@ def decode_image(raw,name='image'):
     if len(raw)>MAX_FILE:raise ValueError('Image source exceeds 1 MiB')
     kind='binary';details={}
     if raw.startswith(b'\x04TH'):
-        if raw[:5]!=b'\x04TH20':raise ValueError('Unsupported THP version '+repr(raw[:5])+'; TH20 samples are supported, later layouts are not guessed')
-        if len(raw)!=262:raise ValueError('TH20 requires exactly 262 bytes (5-byte header, 256-byte payload, 1-byte trailer)')
-        data=bytes(value^offset for offset,value in enumerate(raw[5:261]));kind='thaiphoon-th20'
-        details=dict(header_hex=raw[:5].hex(),trailer_hex=raw[261:].hex(),transform='spd[i] = file[5+i] XOR i; 0 <= i < 256',container_integrity='No independently verified TH20 container checksum')
+        from spd_thp import decode_thp
+        data,details=decode_thp(raw);kind='thaiphoon-'+raw[1:5].decode('ascii').lower()
     elif Path(name).suffix.lower()=='.thp':raise ValueError('Unrecognized THP signature; no raw or heuristic fallback')
     elif raw.startswith(b'Type:DIMM SPD'):
         try:text=raw.decode('ascii').replace('\\r\\n','\n').replace('\\n','\n')
@@ -63,7 +61,7 @@ def decode_image(raw,name='image'):
         if parsed is not None:data=parsed;kind='hex-text'
         elif raw and all(b in b'\t\r\n' or 32<=b<=126 for b in raw):raise ValueError('Invalid hex-text SPD dump')
         else:data=bytes(raw)
-        if not 128<=len(data)<=256:raise ValueError('Raw SPD image must contain 128–256 bytes')
+        if not (128<=len(data)<=256 or len(data) in (512,1024)):raise ValueError('Raw SPD image must contain 128–256, 512 or 1024 bytes')
     source=dict(format=kind,name=Path(name).name,sha256=sha256(raw),length=len(raw),decoded_sha256=sha256(data),decoded_length=len(data),details=details)
     return dict(data=data,source=source,original=bytes(raw) if kind!='binary' else None,metadata={})
 
@@ -150,9 +148,33 @@ def read_inputs(path):
         return decode_bundle_members(members),[]
     records=[];errors=[]
     for name,data in members.items():
-        if Path(name).suffix.lower() not in EXTENSIONS:errors.append(dict(path=str(path)+'#'+name,error='Unsupported archive member extension'));continue
+        if Path(name).suffix.lower() not in EXTENSIONS and not data.startswith(b'\x04TH'):errors.append(dict(path=str(path)+'#'+name,error='Unsupported archive member extension'));continue
         if Path(name).suffix.lower() in ('.zip','.spdz','.7z'):errors.append(dict(path=str(path)+'#'+name,error='Nested archives are not imported'));continue
         try:
             record=decode_image(data,name);record['source'].update(member=name,archive_name=path.name,archive_sha256=sha256(raw));records.append(record)
         except (ValueError,NotImplementedError) as exc:errors.append(dict(path=str(path)+'#'+name,error=str(exc)))
     return records,errors
+
+
+def folder_inputs(path,exclude=()):
+    """Find dumps, including THP files with missing/broken filename extensions.
+
+    Never traverse symlinks or collection-managed data. Do not read arbitrary
+    large files just to sniff a signature; only five bytes are needed.
+    """
+    excluded={Path(p).resolve() for p in exclude};root=Path(path)
+    if root.is_symlink() or not root.is_dir():raise ValueError('Choose a regular input directory')
+    if root.resolve() in excluded:return []
+    paths=[]
+    for directory,dirs,files in os.walk(root,followlinks=False):
+        dirs[:]=sorted(d for d in dirs if d!='.git' and not (Path(directory)/d).is_symlink() and (Path(directory)/d).resolve() not in excluded)
+        for name in sorted(files):
+            p=Path(directory)/name
+            if p.is_symlink() or not p.is_file():continue
+            candidate=p.suffix.lower() in EXTENSIONS
+            if not candidate and p.stat().st_size<=MAX_FILE:
+                with p.open('rb') as stream:candidate=stream.read(3)==b'\x04TH'
+            if candidate:
+                paths.append(p)
+                if len(paths)>10000:raise ValueError('Folder exceeds 10,000 candidate files; import smaller folders')
+    return paths

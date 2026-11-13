@@ -43,7 +43,11 @@ def normalized(value):
 
 
 def describe(data):
-    spd = SPD(data)
+    if not (128<=len(data)<=256 or len(data) in (512,1024)):raise ValueError('Collection images must contain 128–256, 512 or 1024 bytes')
+    try:spd = SPD(data)
+    except (ValueError,NotImplementedError) as exc:
+        from spd_archive import describe_archive
+        return describe_archive(data,exc)
     decoded = spd.decoded_data
     mfg, general = decoded.get('manufacturing', {}), decoded.get('general', {})
     date = mfg.get('manufacture_date')
@@ -58,7 +62,7 @@ def describe(data):
     if capacity is None and decoded.get('module_size_GiB') is not None:
         capacity = decoded['module_size_GiB']*1024
     from spd_vendor import vendor_metadata
-    return dict(metadata_version=3, vendor_data=vendor_metadata(data,decoded), memory=spd.mem_type_name,
+    return dict(metadata_version=4, editable=True,support='Editable',warnings=[],vendor_data=vendor_metadata(data,decoded), memory=spd.mem_type_name,
                 manufacturer=mfg.get('module_mfg_id', 'Unknown manufacturer'),
                 dram_manufacturer=mfg.get('dram_mfg_id') or 'Unknown',
                 part=mfg.get('module_part_number', mfg.get('part_number', '')) or 'Unknown model',
@@ -102,7 +106,7 @@ class Catalog:
         with self.connect() as db:
             for row in db.execute('SELECT sha,metadata FROM images').fetchall():
                 old = json.loads(row['metadata'])
-                if old.get('metadata_version') != 3:
+                if old.get('metadata_version') != 4:
                     try:old.update(describe(self.data(row['sha'])))
                     except (ValueError,OSError,NotImplementedError) as exc:
                         self.migration_warnings.append(dict(sha256=row['sha'],error=str(exc)));continue
@@ -119,15 +123,11 @@ class Catalog:
 
     def add(self, data, source='editor'):
         data = bytes(data)
-        spd = SPD(data)
-        decoded = spd.decoded_data
-        mfg = decoded.get('manufacturing', {})
-        vendor = mfg.get('module_mfg_id', 'Unknown manufacturer')
-        part = mfg.get('module_part_number', mfg.get('part_number', '')) or 'Unknown model'
-        serial = str(mfg.get('serial_number', '')) or 'No serial'
+        metadata=describe(data)
+        vendor,part,serial=metadata['manufacturer'],metadata['part'],metadata['serial']
         sha = hashlib.sha256(data).hexdigest()
-        relative = Path('modules')/safe_name(spd.mem_type_name)/safe_name(vendor)/safe_name(part)/(safe_name(serial)[:16]+'--'+sha+'.bin')
-        metadata = dict(describe(data), sha256=sha, path=relative.as_posix())
+        relative = Path('modules')/safe_name(metadata['memory'])/safe_name(vendor)/safe_name(part)/(safe_name(serial)[:16]+'--'+sha+'.bin')
+        metadata = dict(metadata, sha256=sha, path=relative.as_posix())
         destination = self.root/relative
         if self.root not in destination.resolve().parents: raise ValueError('Catalog destination escapes collection')
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +149,7 @@ class Catalog:
             if original is not None:
                 digest=sha256(original)
                 if source.get('sha256')!=digest:raise ValueError('Imported original-source hash mismatch')
-                extension={'thaiphoon-th20':'.thp','rw-everything':'.rw','hex-text':'.txt'}.get(source.get('format'),'.dat')
+                extension='.thp' if source.get('format','').startswith('thaiphoon-th') else {'rw-everything':'.rw','hex-text':'.txt'}.get(source.get('format'),'.dat')
                 relative=Path('originals')/(digest+extension);destination=self.root/relative
                 if self.root not in destination.resolve().parents:raise ValueError('Original source path escapes collection')
                 destination.parent.mkdir(exist_ok=True)
@@ -176,9 +176,14 @@ class Catalog:
         with self.connect() as db:return [json.loads(row['record']) for row in db.execute('SELECT record FROM imports WHERE image_sha=? ORDER BY source_sha,name',(sha,))]
 
     def import_files(self, paths):
-        from spd_containers import read_inputs
+        from spd_containers import read_inputs,folder_inputs
         results,errors=[],[]
+        expanded=[]
         for path in paths:
+            try:
+                expanded.extend(folder_inputs(path,exclude=(self.root,self.root/'modules',self.root/'originals',self.root/'.trash')) if Path(path).is_dir() else [path])
+            except (ValueError,OSError) as exc:errors.append(dict(path=str(path),error=str(exc)))
+        for path in expanded:
             try:
                 records,problems=read_inputs(path);errors.extend(problems)
                 if not records and not problems:raise ValueError('No SPD images in input')
@@ -206,7 +211,7 @@ class Catalog:
             observations=[]
             for report in self.import_sources(sha):
                 incoming=report.get('metadata',{})
-                extra={k:v for k,v in incoming.items() if k not in ('manufacturer','part_number','serial','spd_integrity','oem','provenance','imported_metadata')}
+                extra={k:v for k,v in incoming.items() if k not in ('manufacturer','part_number','serial','spd_integrity','oem','provenance','imported_metadata','editable','support','warnings')}
                 candidates=([extra] if extra else [])+(incoming.get('imported_metadata',[]) if isinstance(incoming.get('imported_metadata'),list) else [])
                 for extra in candidates:
                     if extra not in observations:observations.append(extra)
@@ -217,7 +222,8 @@ class Catalog:
                     if path.stat().st_size>1024*1024:raise ValueError('Original source exceeds 1 MiB')
                     original=path.read_bytes()
                 sources.append(dict(source=report['source'],original=original))
-            metadata=dict(manufacturer=row['manufacturer'],part_number=row['part'],serial=row['serial'],spd_integrity=integrity_info(data),oem=self.oem_details(sha))
+            from spd_archive import archive_integrity
+            metadata=dict(manufacturer=row['manufacturer'],part_number=row['part'],serial=row['serial'],spd_integrity=archive_integrity(data),oem=self.oem_details(sha),editable=row.get('editable',True),support=row.get('support','Editable'))
             if observations:metadata['imported_metadata']=observations
             if row.get('vendor_profile_application'):metadata['provenance']=row['vendor_profile_application']
             records.append(dict(data=data,sources=sources,metadata=metadata))
@@ -252,7 +258,7 @@ class Catalog:
     def facets(self):
         rows=self.rows()
         keys=('oem_name','manufacturer','dram_manufacturer','memory','module_type','capacity_mib','data_rate_MTps',
-              'ranks','ecc','integrity','hpt_present','length','manufacture_year')
+              'ranks','ecc','integrity','hpt_present','length','manufacture_year','support')
         result={key:sorted({label(r.get(key)) for r in rows}) for key in keys}
         for key in ('capacity_mib','data_rate_MTps','ranks','length','manufacture_year'):
             result[key].sort(key=lambda v:(v=='Unknown',float(v) if v!='Unknown' else 0))
@@ -264,7 +270,7 @@ class Catalog:
         if row is None: raise ValueError('Unknown catalog image')
         path = (self.root/row['path']).resolve()
         if self.root not in path.parents: raise ValueError('Catalog path escapes collection')
-        if path.stat().st_size > 256: raise ValueError('Catalog artifact exceeds supported image size')
+        if path.stat().st_size > 1024: raise ValueError('Catalog artifact exceeds supported image size')
         data = path.read_bytes()
         if hashlib.sha256(data).hexdigest() != sha: raise ValueError('Catalog image hash mismatch')
         return data

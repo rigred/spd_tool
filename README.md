@@ -53,7 +53,7 @@ python spd_tool.py dump --spd module.bin --json module.json
 python spd_tool.py diff --file-a original.bin --file-b modified.bin --show-maps
 ```
 
-The loader accepts binary images, hex-text dumps, Thaiphoon TH20 dumps and
+The loader accepts binary images, hex-text dumps, supported Thaiphoon THP dumps and
 single-image open SPD bundles. Supported editable images contain 128-256 bytes. Image
 length is preserved. See [Image formats](docs/FORMATS.md) for text syntax,
 partial images and checksum coverage.
@@ -134,14 +134,20 @@ not a measured hardware result.
 
 ## THP conversion and open bundles
 
-TH20 imports decode directly into normal binary images in the library; original
+TH20, TH40, TH41, TH42, TH43, TH50 and TH53 imports decode directly into normal binary images in the library; original
 wrappers are retained separately. Bulk file/folder import also accepts ZIP archives
 and optional 7z collections. Conversion preserves the original SPD checksum/CRC,
 including invalid values.
 
+The library also stores 512-byte DDR4 and 1024-byte DDR5 images with read-only
+identity, CRC and byte inspection. Unsupported or damaged memory-type declarations
+remain labelled archive entries. Editing and hardware programming remain limited
+to SDR through DDR3. Use the library's **Support** filter to distinguish them.
+
 ```sh
 python spd_tool.py convert --source module.thp --out module.bin
 python spd_tool.py library-import --collection ./collection --source SPDs.7z
+python spd_tool.py library-import --collection ./collection --source ./Unsorted-SPD-Dumps/Dumps
 python spd_tool.py convert --source module.thp --out module.spdz
 ```
 

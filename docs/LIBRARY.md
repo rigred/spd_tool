@@ -16,23 +16,38 @@ checked when reopening them.
 
 ## Import and edit
 
-Use **Add SPD files / archives** for binary, TH20, supported text dumps or archives, **Import folder**
+Use **Add SPD files / archives** for binary, supported THP, text dumps or archives, **Import folder**
 for a recursive batch, or **Add editor image** to capture the current editor
 buffer, including unsaved changes. Imports never move or repair the source.
 Identical bytes share one database entry while source references are retained.
 Different dumps with the same serial remain distinct. Invalid checksums remain
 visible for recovery work. Errors are reported per file.
 
-Imports use the core SDR/DDR/DDR2/DDR3 decoder and its 128-256-byte limits.
+SDR/DDR/DDR2/DDR3 images of 128–256 bytes use the editor's decoders. The library
+also accepts 512-byte DDR4 and 1024-byte DDR5 images for **read-only archival**,
+manufacturer/part/date/serial inspection and CRC checks. Capacity, speed, ranks
+and ECC remain unknown where a complete decoder is unavailable. Unsupported or
+damaged memory-type declarations are kept as read-only entries with explicit
+warnings; filenames never determine the memory type. A CRC result describes only
+the listed covered regions, not complete module validity or compatibility.
+
 Large firmware images must first be extracted with the firmware scanner. Individual image sources larger than 1 MiB and symbolic links are rejected;
 archives have separate bounded expansion limits. Folder imports are limited to
 10,000 candidate files and consider `.bin`, `.spd`, `.thp`, `.rw`, `.hex`, `.txt`,
-`.zip`, `.spdz` and `.7z`. Managed `modules/` and `originals/` directories are
-skipped when importing a collection root. An import result's accepted count includes duplicates encountered.
+`.zip`, `.spdz` and `.7z`. THP signatures also identify files with missing or
+incorrect extensions. Symlink directories and `.git` are skipped. The active
+collection subtree is excluded from recursive imports. An import result's
+accepted count includes duplicates encountered; distinct-image counts are
+reported separately.
+
+The import log groups rejections and displays a bounded preview. **Export → Last
+import report** saves the complete JSON record, including every source, support
+status and rejection. Invalid and unknown SPD integrity counts are separate from
+container conversion failures. Import never repairs either category.
 
 Enable **Filters** and use the dropdowns to combine module vendor, DRAM vendor, memory generation,
 module type, capacity (MiB), SPD maximum speed (MT/s), ranks, ECC, integrity,
-HPT presence, image size and manufacturing year. The From/To year controls are
+HPT presence, image size, editing support and manufacturing year. The From/To year controls are
 inclusive; applying a bound excludes unknown dates. Unknown dates remain an
 explicit year filter choice. Dates come from SPD, not filesystem timestamps.
 Sort by model, vendor, manufacturing date, capacity, speed or serial. Unknown
@@ -42,7 +57,7 @@ Existing collections are automatically backfilled with this metadata on open.
 The original source references and managed filenames are retained. The table
 reports filtered and total image counts.
 
-Select one row and choose **Module actions → Open selected in editor**. The editor receives a snapshot;
+Select one row and choose **Module actions → Open / inspect selected**. Editable images open in the workbench; read-only entries open an identity/integrity inspector with exact bytes and metadata. **Export → Selected raw binary** exports one image without repair; open bundles export multiple images and their sources. The editor receives a snapshot;
 Save As and subsequent **Add editor image** preserve a modified version without
 overwriting the archived original. Search matches identity, integrity and hash.
 
@@ -50,8 +65,7 @@ The historical `sort_spd.py` SQLite/HTML organizer remains available. Its old
 SQLite schema is not rewritten or opened as the new database. To bring an old
 collection into this interface, import its organized binary folder into a new
 collection. Existing JSON/HTML indexes are not needed and are left untouched.
-DDR4 records in the old organizer remain there until core catalog support is
-extended; the GUI reports those imports as unsupported.
+DDR4 records from the old organizer can be imported as read-only collection entries.
 
 ## OEM sticker details
 
@@ -180,7 +194,7 @@ provenance. Profile-generated entries are excluded from family mining.
 
 ## THP and open-bundle imports
 
-File and folder imports accept TH20 `.thp`, supported `.rw`, raw/text images,
+File and folder imports accept supported THP containers, supported `.rw`, raw/text images,
 ZIP/open bundles and optional 7z collections. Normalized `.bin` images are stored
 under the collection hierarchy; original nonbinary sources and conversion hashes
 are retained separately. Unknown members are reported individually during generic
@@ -200,7 +214,8 @@ Use the **SPD library** button at the top of the application. The library is
 separate from the module editor's sidebar. The editor's save/undo controls and
 sidebar are hidden while browsing the collection; **Module workbench** returns
 to the last editing page. Opening a selected collection image returns to the
-module workbench automatically.
+module workbench automatically when that image is editable. Other entries open
+the read-only inspector without replacing the active editor document.
 
 The file list expands with the window and has independent vertical and
 horizontal scrollbars. Filters and the details/log pane start collapsed.

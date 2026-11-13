@@ -96,7 +96,7 @@ def _try_load_text_hex(raw: bytes) -> Optional[bytes]:
                 return None
             vals.append(int(token, 16))
             expected_offset += 1
-    return bytes(vals) if 128 <= len(vals) <= 256 else None
+    return bytes(vals) if 128 <= len(vals) <= 256 or len(vals) in (512,1024) else None
 
 
 def load_spd_file(path: str) -> SPD:

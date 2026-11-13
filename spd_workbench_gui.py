@@ -138,6 +138,7 @@ class FactoryPanel:
         def collect():
             results=[];errors=[]
             for row in rows:
+                if not row.get('editable',True):continue
                 if len(rows)>200 and self.editor.hardware.cancel_event.is_set():break
                 try:data=cat.data(row['sha256']);report=assess(data,target)
                 except (ValueError,OSError,NotImplementedError) as exc:errors.append(str(exc));continue
