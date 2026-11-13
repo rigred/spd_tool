@@ -34,6 +34,8 @@ from source.
 - Tk and a graphical display for the editor. On Debian/Ubuntu, install
   `python3-tk` if it is not included with Python.
 - Linux I2C device access for `spd_smbus.py`.
+- Native Windows SMBus uses the separately installed signed PawnIO driver;
+  see [Windows execution and SPD access](docs/WINDOWS.md).
 - Optional `pyserial` for the external USB bridge (`requirements-bridge.txt`).
 - Optional `py7zr` for 7z collection import (`requirements-archives.txt`).
 

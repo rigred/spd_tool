@@ -13,11 +13,12 @@ starts with `SPDTool.exe`. An optional image filename opens that image directly.
 Store collections and exports in a writable directory outside the application
 folder. Preferences use the normal per-user configuration directory.
 
-The supplied Linux build targets x86-64 and was built/tested on a glibc 2.41
-system. Older distributions are not qualified; build from source on the oldest
-distribution intended for deployment. This Linux artifact cannot run on Windows,
-macOS, ARM or musl-based distributions. Windows/macOS require native builds;
-the source package includes their build recipe, not prebuilt executables.
+Release packages target Linux x86-64 and Windows x64. The GitHub Linux workflow
+builds on Ubuntu 22.04; each package records its actual build platform/libc in
+`BUILD_INFO.json`. Older distributions are not qualified; build from source on
+the oldest intended deployment system. Choose the package for the target OS:
+Linux binaries cannot run on Windows, macOS, ARM or musl-based distributions.
+macOS has a source build recipe but is outside the automated release matrix.
 
 Every distribution includes `BUILD_INFO.json` with version, platform, dependency
 versions and source hashes; `SHA256SUMS` covers the packaged files. Dependency
@@ -52,6 +53,8 @@ python -m venv .venv
 # Linux/macOS: source .venv/bin/activate
 # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install -r requirements-build.txt
+# Windows native SMBus assets (no driver installation):
+# python packaging/fetch_windows_modules.py
 python packaging/build_desktop.py
 ```
 
@@ -68,8 +71,41 @@ Verify the executable from a different directory after moving its entire folder:
 ```
 
 A release should be tested on each intended OS and architecture. A successful
-offline self-test does not qualify USB drivers or physical programming. Native
-host SMBus/I2C remains Linux-only. Windows uses the external serial bridge and
-its board-specific driver; no Windows kernel SMBus driver is supplied. See the
+offline self-test does not qualify USB drivers or physical programming. Linux
+uses its native I2C stack; Windows uses signed PawnIO SMBus modules or the
+external serial bridge. Install the PawnIO driver separately for native access.
+See [Windows setup and controller limits](WINDOWS.md), the
 [external bridge guide](EXTERNAL_BRIDGE.md) and
 [PyInstaller documentation](https://pyinstaller.org/en/stable/operating-mode.html).
+
+## GitHub Actions releases
+
+`.github/workflows/desktop-releases.yml` tests and builds native x86-64 packages
+on Ubuntu 22.04 and Windows Server 2022 with Python 3.12. Linux GUI tests use
+Xvfb. Both builds run the relocated frozen-runtime GUI/CLI checks; these checks
+never load a hardware driver or access DIMMs. Windows assets are downloaded
+from fixed official URLs and verified before bundling, with corresponding
+source/license files included.
+
+Pushes to `main`, pull requests and **Actions → Desktop builds and releases →
+Run workflow** produce downloadable workflow artifacts. To publish a release:
+
+1. Update `VERSION` in `spd_version.py` and commit the source/workflow changes.
+2. Push a matching tag, for example:
+
+   ```sh
+   git tag v2026.11.13.1
+   git push origin v2026.11.13.1
+   ```
+
+The tag must equal `v` plus the source version. After both platforms pass, the
+publish job creates/updates that GitHub release with Windows ZIP, Linux tar.gz
+and SHA-256 files. Native packages contain the application/runtime/docs, not the
+entire source checkout. GitHub supplies its usual tag source archives.
+Manual/branch/PR builds do not publish a release.
+
+Build jobs have read-only repository permissions. Only the tag publish job has
+`contents: write`, using the repository's built-in `GITHUB_TOKEN`; no personal
+token is required. Repository policy must permit Actions and release writes.
+Action versions are pinned to commits. Archives/checksums are unsigned; no
+Authenticode signing certificate or Windows kernel driver is distributed.

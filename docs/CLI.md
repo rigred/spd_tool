@@ -196,6 +196,19 @@ See [Hardware acquisition](HARDWARE.md) for transport options, HP Gen8 platform
 constraints and programming requirements.
 
 
+## Native Windows SMBus
+
+Native Windows hardware commands use `windows-smbus`:
+
+```powershell
+python spd_tool.py windows-smbus adapters
+python spd_tool.py windows-smbus --adapter i801 scan --probe
+python spd_tool.py windows-smbus --adapter i801 read --addr 0x50 --out original.bin
+```
+
+See [Windows setup, preview/write commands and controller limits](WINDOWS.md).
+The existing `smbus` subcommand remains the Linux transport.
+
 ## Container conversion and bulk collection import
 
 ```sh

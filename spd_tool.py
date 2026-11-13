@@ -118,6 +118,8 @@ def main():
     add_firmware_parser(subparsers)
     from spd_conversion import add_parsers as add_conversion_parsers
     add_conversion_parsers(subparsers)
+    from spd_windows import add_parser as add_windows_parser
+    add_windows_parser(subparsers)
 
     p_gui = subparsers.add_parser('gui', help='Open the offline Tk graphical SPD editor.')
     p_gui.add_argument('--spd', help='Optional SPD image to open.')
@@ -174,6 +176,8 @@ def main():
     p.add_argument("args", nargs=argparse.REMAINDER, help="pass-through to spd_smbus.py")
     def _smbus_cmd(ns):
     # forward args to the expansion tool's argparse
+        if sys.platform=='win32':
+            raise ValueError('Use windows-smbus for native Windows controllers; smbus is the Linux backend')
         from spd_smbus import main as smbus_main
         sys.exit(smbus_main(ns.args))
     p.set_defaults(func=_smbus_cmd)

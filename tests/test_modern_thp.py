@@ -64,7 +64,11 @@ class ModernTHPTests(unittest.TestCase):
         from tests.test_spd import ddr3
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'missing-extension').write_bytes(thp(ddr3()));(root/'renamed.tx').write_bytes(thp(ddr3()))
-            (root/'notes.md').write_text('Documentation');(root/'link.thp').symlink_to(root/'missing-extension')
+            (root/'notes.md').write_text('Documentation')
+            try:(root/'link.thp').symlink_to(root/'missing-extension')
+            except OSError as exc:
+                if getattr(exc,'winerror',None)==1314:self.skipTest('Windows token lacks symbolic-link privilege')
+                raise
             managed=root/'collection';managed.mkdir();(managed/'old.thp').write_bytes(thp(ddr3()))
             self.assertEqual(len(folder_inputs(root,exclude=[managed])),2)
             catalog=Catalog(managed);rows,errors=catalog.import_files([root]);self.assertFalse(errors);self.assertEqual(len(rows),2);self.assertEqual(len(catalog.rows()),1)

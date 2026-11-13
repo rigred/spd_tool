@@ -28,6 +28,7 @@ class HardwareTkTests(unittest.TestCase):
         from spd_editor import SPDEditor
         self.root = tk.Tk(); self.app = SPDEditor(self.root)
         self.panel = self.app.hardware
+        self.panel.mode.set('Linux I2C / SMBus')  # The transport factory below is simulated on every OS.
         self.temp = tempfile.TemporaryDirectory()
         self.backend = GUIBackend(ddr3())
         self.factory = patch('spd_hardware_gui.LinuxBackend',return_value=self.backend)
@@ -66,6 +67,17 @@ class HardwareTkTests(unittest.TestCase):
         self.panel.adapter.set('1')
         with self.assertRaisesRegex(ValueError,'Connection changed'):
             self.panel.load()
+
+    def test_windows_discovery_scan_and_module_folder_invalidation(self):
+        self.panel.mode.set('Windows native SMBus');self.panel.windows_modules.set(self.temp.name);self.panel.active.set(True)
+        report=dict(adapters=[dict(profile='i801',type='i801',vendor_id='8086',device_id='1C22')],errors=[])
+        with patch('spd_hardware_gui.sys.platform','win32'),patch('spd_windows.inventory',return_value=report) as discover,patch('spd_hardware_gui.WindowsBackend',return_value=self.backend) as backend:
+            self.panel.discover();self.wait();discover.assert_called_once_with(self.temp.name)
+            self.assertTrue(self.panel.adapter.get().startswith('i801'))
+            self.panel.scan();self.wait();backend.assert_called_once_with('i801',self.temp.name)
+            self.assertEqual(len(self.panel.images),1)
+            self.panel.windows_modules.set(str(Path(self.temp.name)/'changed'))
+            with self.assertRaisesRegex(ValueError,'Connection changed'):self.panel.selected()
 
     def test_review_confirm_backup_program_and_verify(self):
         self.scan(); self.panel.load(); self.wait()

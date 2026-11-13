@@ -29,6 +29,18 @@ def build(output=None,console=False):
              '--collect-all','py7zr','--collect-submodules','serial',
              '--add-data',str(root/'hp_families.json')+':.',str(root/'spd_desktop.py')]
     work.mkdir(parents=True,exist_ok=True)
+    if sys.platform=='win32':
+        from spd_pawnio import MODULES,module_bytes,module_directory
+        # Fetching is a separate explicit build step; it never installs a driver.
+        for profile in MODULES:module_bytes(profile)
+        windows_assets=work/'windows-modules'
+        if windows_assets.exists():shutil.rmtree(windows_assets)
+        windows_assets.mkdir()
+        for name in [entry[0] for entry in MODULES.values()]+['COPYING','SOURCE.zip','ORIGIN.json']:
+            origin=module_directory()/name
+            if not origin.is_file():raise ValueError('Run packaging/fetch_windows_modules.py to include the module license and corresponding sources')
+            shutil.copy2(origin,windows_assets/name)
+        command[-1:-1]=['--add-data',str(windows_assets)+':resources/windows/PawnIO']
     subprocess.run(command,cwd=root,check=True)
     # On macOS the .app is the desktop artifact; on Linux/Windows it is onedir.
     app=output/('SPDTool.app' if sys.platform=='darwin' else 'SPDTool')
@@ -38,7 +50,11 @@ def build(output=None,console=False):
     shutil.copytree(root/'docs',documentation/'docs',dirs_exist_ok=True)
     shutil.copytree(root/'schemas',documentation/'schemas',dirs_exist_ok=True)
     shutil.copytree(root/'firmware',documentation/'firmware',dirs_exist_ok=True)
+    if sys.platform=='win32':
+        shutil.copytree(windows_assets,documentation/'third-party/PawnIO.Modules',dirs_exist_ok=True)
     (app/'START_HERE.txt').write_text('SPD Tool '+VERSION+'\n\nLaunch '+('SPDTool.exe' if sys.platform=='win32' else 'SPDTool')+' to open the editor.\nKeep the complete application directory together. No Python installation is required.\nStore collections in a writable folder outside the application directory.\n7z import and USB serial support are included; board drivers remain separate.\n\nDiagnostics: SPDTool --self-test --report check.json\nGUI diagnostics: SPDTool --self-test --gui-check --report gui-check.json\nCLI: SPDTool --cli --help\n\nRead documentation/docs/RELEASES.md for platform limits and build details.\n',encoding='utf-8')
+    if sys.platform=='win32':
+        with (app/'START_HERE.txt').open('a',encoding='utf-8') as info:info.write('\nNative motherboard SMBus requires the separately installed official signed PawnIO driver and Administrator rights. See documentation/docs/WINDOWS.md.\n')
     packages={d.metadata['Name']:d.version for d in metadata.distributions() if d.metadata.get('Name')}
     provenance=dict(version=VERSION,built_at=datetime.now(timezone.utc).isoformat(),python=platform.python_version(),
                     platform=platform.platform(),architecture=platform.machine(),libc=platform.libc_ver(),packages=dict(sorted(packages.items())),

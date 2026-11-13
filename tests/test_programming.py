@@ -135,6 +135,8 @@ class ProgrammingTests(unittest.TestCase):
             self.assertEqual(bytes(backend.memory),edited)
 
     def test_linux_kernel_owned_programming_rejected(self):
+        import sys
+        if not sys.platform.startswith('linux'):self.skipTest('Linux kernel ownership test')
         from unittest.mock import patch
         with patch('spd_smbus._driver', return_value='eeprom'), patch('spd_smbus.bus_session') as session:
             with self.assertRaisesRegex(ValueError, 'Kernel-owned'):

@@ -22,6 +22,10 @@ def self_test(gui=False):
     registry=json.loads(Path(__file__).with_name('hp_families.json').read_text(encoding='utf-8'))
     if not registry:raise ValueError('Bundled HP family registry is empty')
     checks=['HP family registry','pyserial and platform port-discovery imports']
+    if sys.platform=='win32':
+        from spd_pawnio import MODULES,module_bytes
+        for profile in MODULES:module_bytes(profile)
+        checks.append('Pinned Windows PawnIO SMBus modules (no driver/hardware access)')
     # Synthetic DDR3 identity/timing fixture; not a hardware configuration.
     legacy=bytearray(256)
     for i,v in {0:0x12,1:0x13,2:11,3:2,4:4,5:0x21,6:2,7:9,8:11,9:0x11,10:1,11:8,12:10,14:0xA0,16:110,17:120,18:110,19:48,20:110,21:0x11,22:24,23:134,25:5,26:60,27:60,28:1,117:0x80,118:0x2C,120:0x24,121:0x12}.items():legacy[i]=v

@@ -14,6 +14,7 @@ import spd_smbus as hw
 from tests.test_spd import ddr3
 
 
+@unittest.skipUnless(hw.fcntl is not None,'Linux ioctl ABI tests')
 class TransportTests(unittest.TestCase):
     def test_smbus_only_adapter_uses_byte_data_and_normal_claim(self):
         calls=[]
@@ -81,6 +82,7 @@ class TransportTests(unittest.TestCase):
             close.assert_called_once_with(7)
 
 
+@unittest.skipUnless(hw.fcntl is not None,'Linux adapter acquisition tests')
 class AcquisitionTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
@@ -173,6 +175,7 @@ class AcquisitionTests(unittest.TestCase):
         with self.assertRaises(ValueError):hw.atomic_output(self.root,b'new')
 
 
+@unittest.skipUnless(hw.fcntl is not None,'Linux adapter programming tests')
 class ProgrammerTests(unittest.TestCase):
     def test_invalid_programming_never_writes(self):
         with patch.object(hw,'_i2c_rdwr') as transfer,patch.object(hw,'adapter_functions') as caps:

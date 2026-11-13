@@ -88,8 +88,12 @@ class FirmwareTests(unittest.TestCase):
             raw = ddr3()[:128]
             (nested / 'body.bin').write_bytes(b'12345' + raw)
             (source / 'second.bin').write_bytes(raw)
-            (source / 'ignored').symlink_to(nested, target_is_directory=True)
-            (source / 'ignored.bin').symlink_to(nested / 'body.bin')
+            try:
+                (source / 'ignored').symlink_to(nested, target_is_directory=True)
+                (source / 'ignored.bin').symlink_to(nested / 'body.bin')
+            except OSError as exc:
+                if getattr(exc,'winerror',None)==1314:self.skipTest('Windows token lacks symbolic-link privilege')
+                raise
             out = root / 'extracted'
             report = scan_firmware(source, out)
             self.assertEqual(report['errors'], [])

@@ -2,6 +2,7 @@
 """Compile the shipped sketch and run host/firmware protocol integration."""
 from pathlib import Path
 import select
+import os
 import shutil
 import subprocess
 import tempfile
@@ -41,7 +42,7 @@ class SimulatedSerial:
         return self.process.stdout.readline(size)
 
 
-@unittest.skipUnless(shutil.which('g++'), 'C++ compiler required for firmware simulator')
+@unittest.skipUnless(os.name=='posix' and shutil.which('g++'), 'POSIX pipes and C++ compiler required for firmware simulator')
 class FirmwareBridgeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

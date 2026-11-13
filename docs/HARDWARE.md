@@ -1,5 +1,9 @@
 # Linux SPD acquisition
 
+For native Windows SMBus through signed PawnIO modules, see
+[Windows execution and SPD access](WINDOWS.md). This page describes Linux
+adapter/sysfs/I2C behavior; the external USB bridge is cross-platform.
+
 The editor exposes acquisition and programming in its **Hardware / programmer**
 tab. See the [GUI workflow](GUI_HARDWARE.md) for reviewed writes, or the
 [external bridge guide](EXTERNAL_BRIDGE.md) for standalone DIMM fixtures.

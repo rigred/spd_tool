@@ -12,7 +12,8 @@ from contextlib import contextmanager
 import ctypes as C
 from dataclasses import dataclass
 import errno
-import fcntl
+try:import fcntl
+except ImportError:fcntl=None  # Pure integrity helpers remain usable on Windows.
 import json
 import math
 import os
@@ -33,7 +34,7 @@ I2C_SMBUS_BYTE_DATA = 2
 SYS_EE = '/sys/bus/i2c/devices'
 SYS_ADAPTERS = '/sys/class/i2c-adapter'
 DEV_ROOT = '/dev'
-TRANSIENT = {errno.EAGAIN, errno.EINTR, errno.ETIMEDOUT, errno.EREMOTEIO, errno.EIO}
+TRANSIENT = {errno.EAGAIN, errno.EINTR, errno.ETIMEDOUT, getattr(errno,'EREMOTEIO',errno.EIO), errno.EIO}
 SUPPORTED = {4:'SDR', 7:'DDR', 8:'DDR2', 11:'DDR3'}
 
 
@@ -157,6 +158,7 @@ def _bus(bus):
 
 
 def open_bus(bus):
+    if fcntl is None or not sys.platform.startswith('linux'):raise ValueError('Linux I2C requires Linux; use windows-smbus or the USB serial backend')
     _bus(bus)
     return os.open(f'{DEV_ROOT}/i2c-{bus}',os.O_RDWR|getattr(os,'O_CLOEXEC',0))
 
@@ -299,6 +301,7 @@ def list_buses():
 
 def inventory(bus=None):
     """Passive enumeration: names, bound devices and adapter capabilities only."""
+    if fcntl is None or not sys.platform.startswith('linux'):raise ValueError('Linux adapter inventory requires Linux; use Windows native SMBus discovery')
     buses=[bus] if bus is not None else list_buses()
     result=[]
     for number in buses:

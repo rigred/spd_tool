@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Asynchronous Tk acquisition and reviewed programming workflow."""
 import json
+import os
 from pathlib import Path
 import queue
 import sys
@@ -8,6 +9,7 @@ import threading
 
 from spd_hardware import (LinuxBackend, ExternalBackend, digest,
                           prepare_programming, execute_programming)
+from spd_windows import WindowsBackend
 
 
 class HardwarePanel:
@@ -34,7 +36,8 @@ class HardwarePanel:
         self.backend = None
         self.scan_config = None
         self.plan = None
-        self.mode = tk.StringVar(value='Linux I2C / SMBus' if sys.platform.startswith('linux') else 'USB serial bridge')
+        self.mode = tk.StringVar(value='Windows native SMBus' if sys.platform=='win32' else 'Linux I2C / SMBus' if sys.platform.startswith('linux') else 'USB serial bridge')
+        self.windows_modules=tk.StringVar(value=os.environ.get('SPD_TOOL_PAWNIO_DIR',''))
         self.adapter = tk.StringVar()
         self.active = tk.BooleanVar(value=False)
         self.repair = tk.BooleanVar(value=True)
@@ -43,13 +46,21 @@ class HardwarePanel:
         self.state = tk.StringVar(value='Discover adapters, choose one, then scan for SPD devices.')
         controls = ttk.LabelFrame(parent, text='Connection', padding=10)
         controls.pack(fill='x', padx=10, pady=8)
-        ttk.Combobox(controls, textvariable=self.mode, values=('Linux I2C / SMBus', 'USB serial bridge'), state='readonly', width=22).grid(row=0, column=0, padx=4)
+        ttk.Combobox(controls, textvariable=self.mode, values=('Linux I2C / SMBus', 'Windows native SMBus', 'USB serial bridge'), state='readonly', width=22).grid(row=0, column=0, padx=4)
         self.adapter_box = ttk.Combobox(controls, textvariable=self.adapter, width=32)
         self.adapter_box.grid(row=0, column=1, padx=4)
         ttk.Button(controls, text='Discover adapters', command=lambda:self.safe(self.discover)).grid(row=0, column=2, padx=4)
         ttk.Button(controls, text='Scan selected adapter', command=lambda:self.safe(self.scan)).grid(row=0, column=3, padx=4)
         ttk.Checkbutton(controls, text='Probe unregistered SPD addresses (0x50–0x57)', variable=self.active).grid(row=1, column=0, columnspan=3, sticky='w', pady=8)
         self.mode.trace_add('write', self.connection_changed)
+        ttk.Label(controls,text='Windows PawnIO modules:').grid(row=2,column=0,sticky='w')
+        ttk.Entry(controls,textvariable=self.windows_modules,width=45).grid(row=2,column=1,columnspan=2,sticky='ew',padx=4)
+        def choose_modules():
+            from tkinter import filedialog
+            path=filedialog.askdirectory(parent=self.root,title='Official PawnIO SMBus module folder')
+            if path:self.windows_modules.set(path)
+        ttk.Button(controls,text='Choose folder…',command=lambda:self.safe(choose_modules)).grid(row=2,column=3,padx=4)
+        self.windows_modules.trace_add('write',self.connection_changed)
         ttk.Label(parent, textvariable=self.state, padding=8, wraplength=1100).pack(fill='x')
         table = ttk.Frame(parent)
         table.pack(fill='x', padx=10)
@@ -104,7 +115,7 @@ class HardwarePanel:
             raise ValueError('A hardware operation is already running')
 
     def config(self):
-        return self.mode.get(), self.adapter.get().strip()
+        return self.mode.get(), self.adapter.get().strip(),self.windows_modules.get().strip() if self.mode.get()=='Windows native SMBus' else ''
 
     def selected(self):
         self.idle()
@@ -174,10 +185,18 @@ class HardwarePanel:
 
     def discover(self):
         mode = self.mode.get()
+        modules=self.windows_modules.get().strip()
         def work():
             if mode == 'USB serial bridge':
                 from spd_bridge import list_ports
                 return [f'{port} — {description}' for port, description in list_ports()]
+            if mode=='Windows native SMBus':
+                if sys.platform!='win32':raise ValueError('Native PawnIO adapters require Windows; select Linux SMBus or USB serial here')
+                from spd_windows import inventory
+                report=inventory(modules)
+                for item in report['errors']:self.events.put(('log',item['profile']+': '+item['error']))
+                if not report['adapters']:raise ValueError('No supported PawnIO controller. Install the official driver, use Administrator rights and check the module folder. See docs/WINDOWS.md')
+                return [f'{r["profile"]} — {r["type"]} PCI {r["vendor_id"]}:{r["device_id"]}' for r in report['adapters']]
             if not sys.platform.startswith('linux'):
                 raise ValueError('Local I2C / SMBus discovery requires Linux')
             from spd_smbus import inventory
@@ -193,11 +212,15 @@ class HardwarePanel:
     def scan(self):
         self.idle()
         configuration = self.config()
-        mode, value = configuration
+        mode, value, modules = configuration
         name = value.split(' — ', 1)[0]
         if not name:
             raise ValueError('Select an adapter or serial port first')
-        backend = ExternalBackend(name) if mode == 'USB serial bridge' else LinuxBackend(int(name, 0))
+        if mode=='USB serial bridge':backend=ExternalBackend(name)
+        elif mode=='Windows native SMBus':
+            if sys.platform!='win32':raise ValueError('Native PawnIO access requires Windows')
+            backend=WindowsBackend(name,modules)
+        else:backend=LinuxBackend(int(name,0))
         self.plan = None
         active = self.active.get()
         def work():
