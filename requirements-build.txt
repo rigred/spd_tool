@@ -1,3 +1,5 @@
 # Optional release tooling; build separately on each target operating system.
 pyinstaller>=6,<7
 pyserial>=3.5,<4
+# Include archive import in desktop distributions rather than requiring pip.
+py7zr>=1.0,<2

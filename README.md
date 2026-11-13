@@ -24,6 +24,12 @@ decoder; DDR4/DDR5 editing, FBDIMM and Rambus formats are outside its scope.
 
 ## Requirements
 
+Packaged desktop builds include Python/Tk, 7z import and USB serial support.
+Extract the complete application directory and launch `SPDTool` (`SPDTool.exe`
+on Windows builds). See [Desktop releases](docs/RELEASES.md) for platform limits,
+diagnostics and build instructions. The requirements below apply when running
+from source.
+
 - Python 3.9 or later; no third-party Python packages required.
 - Tk and a graphical display for the editor. On Debian/Ubuntu, install
   `python3-tk` if it is not included with Python.
